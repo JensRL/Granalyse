@@ -6,12 +6,9 @@
 //   log10(R_rel) = fac + x*log10(A_gran_rel) + y*log10(charb_rel)
 //                      + z*log10(Teff_rel) + z2*(feh - feh_Perky)
 //
-// This is the GAUSSIAN measurement-error variant used for the published
-// seed-42 relations.  A Student-t variant also exists in the original
-// pystan_helpers.py (lin_code_feh_studentt); it adds nu~gamma(2,0.1) and
-// replaces normal() likelihoods with student_t(nu,...) for outlier robustness.
+// This is the Gaussian measurement-error variant used for the published
+// seed-42 relations.  
 //
-// Verbatim from pystan_helpers.py::lin_code_feh_gaussian (GranRadRels repo).
 
 data {
     int<lower = 0> N;

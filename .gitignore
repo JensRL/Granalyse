@@ -3,6 +3,7 @@ data/
 results/
 Results/
 examples/example2_config.yaml
+examples/example_results/
 
 # Python
 __pycache__/

@@ -1,7 +1,7 @@
 # calibration/ — Re-derive granulation-radius scaling relations
 
 This directory is a **self-contained optional component** that lets you
-re-derive the granulation-radius scaling-relation coefficients from your own
+re-derive the granulation-radius relation coefficients from your own
 sample of stars with known radii, instead of using the coefficients shipped
 with `granalyse` (seed-42 relations from arXiv:2605.26742).
 
@@ -12,14 +12,13 @@ with `granalyse` (seed-42 relations from arXiv:2605.26742).
 For each star in your sample it:
 
 1. Finds the granalyse nested-sampling posteriors under `<results-dir>/<name>/model_<MODEL>_*/FitData_model_<MODEL>.csv`.
-2. Transforms the raw Harvey-model posteriors to physical `(charb [μHz], A_gran [ppm])` using `granalyse.radius.transform_posterior_to_observables`.
+2. Transforms the raw posteriors to physical `(charb [μHz], A_gran [ppm])` using `granalyse.radius.transform_posterior_to_observables`.
 3. Computes the **per-star posterior median of log₁₀(A_gran) and log₁₀(charb)** and their **2×2 covariance matrix** via `np.cov`.
 4. Normalises all quantities to **relative space** (divided by the Perky reference star KIC 6106415), exactly as `pystan_helpers.prepare_data_for_stan`.
 5. Assembles the Stan data dict and runs a **hierarchical Stan regression** (4 chains × 10 000 iterations, adapt_delta=0.95, max_treedepth=12).
 6. Saves the coefficient draws as `relation_coefficients_<MODEL>_seeduser.csv`.
 
-The regression model (`relation_model.stan`) is verbatim from
-`pystan_helpers.py::lin_code_feh_gaussian` (GranRadRels repo).
+The regression model may be seen in `relation_model.stan`
 
 ---
 
