@@ -1,0 +1,23 @@
+{
+  "description": "Reference star Perky (KIC 6106415) used to normalise observables into relative space; from GranRadRels helpers.get_perky_params().",
+  "teff": 5721.95,
+  "R_cm": 84426228760.82578,
+  "feh": -0.04,
+  "R_sun_cm": 69570000000.0,
+  "teff_sun": 5777,
+  "models": {
+    "H": {
+      "amp": 46.7572,
+      "charb": 608.908
+    },
+    "J": {
+      "amp": 46.1226,
+      "charb": 595.7373
+    },
+    "T": {
+      "amp": 46.794,
+      "charb": 587.9046
+    }
+  },
+  "provenance": "Stan MCMC draws, derivation seed 42, arXiv:2605.26742; columns fac,x,y,z,z2,sigma trimmed from stan_fit_data_{model}.csv"
+}

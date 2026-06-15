@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "granalyse"
+version = "0.1.0"
+description = "Granulation Analysis with Nested Sampling for Stellar Radius Inference"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Jens Reersted Larsen" }]
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "scipy",
+    "pandas",
+    "matplotlib",
+    "corner",
+    "dynesty",
+    "jax",
+    "astropy",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+calibration = ["cmdstanpy", "arviz"]
+dev = ["pytest"]
+
+[project.scripts]
+granalyse = "granalyse.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["granalyse*"]
+
+[tool.setuptools.package-data]
+"granalyse.radius.relations" = ["*.csv", "*.json"]
