@@ -30,7 +30,7 @@ skip_replot: false             # on resume, reuse existing figures instead of
 stars:
   # Give numax directly...
   - name: KIC8006161
-    pds_file: data/KIC8006161/kplr008006161_kasoc-psd_slc_v1.pow
+    pds_file: examples/data/KIC8006161/kplr008006161_kasoc-psd_slc_v1.pow
     numax: 3575
     teff: 5488
     teff_err: 77
@@ -41,7 +41,7 @@ stars:
   # ...or give logg + teff and let the numax scaling relation estimate it.
   # Simulations (kind: simulation) skip the instrumental-systematics masking.
   # - name: SimulationExample
-  #   pds_file: data/simulated_spectrum.pow
+  #   pds_file: examples/data/simulated_spectrum.pow
   #   kind: simulation
   #   logg: 4.44
   #   teff: 5777

@@ -40,14 +40,22 @@ See [docs/adding_models.md](docs/adding_models.md) for a worked example of regis
 
 ## Installation
 
+Requires Python ≥ 3.11.
+
 ```bash
-git clone https://github.com/jensRL/Granalyse.git
+git clone https://github.com/JensRL/Granalyse.git
 cd Granalyse
-pip install -e .               # core pipeline
-pip install -e .[calibration]  # + optional relation re-derivation
+python3 -m venv .venv
+source .venv/bin/activate       # Windows: .venv\Scripts\activate
+pip install -e .                # core pipeline
 ```
 
-Requires Python ≥ 3.11.
+Optionally, to re-derive the granulation–radius relations yourself, install the
+calibration extra:
+
+```bash
+pip install -e .[calibration]   # optional relation re-derivation
+```
 
 ## Quick start
 
