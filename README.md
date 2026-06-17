@@ -19,16 +19,16 @@ Requires Python ≥ 3.11.
 ```bash
 git clone https://github.com/JensRL/Granalyse.git
 cd Granalyse
-python3 -m venv .venv
-source .venv/bin/activate       # Windows: .venv\Scripts\activate
-pip install -e .                # core pipeline
+python3 -m venv gvenv
+source gvenv/bin/activate       
+pip install -e .                
 ```
 
 Optionally, to be able to re-derive the granulation–radius relations yourself, install the
 calibration extra:
 
 ```bash
-pip install -e .[calibration]   # optional relation re-derivation
+pip install -e .[calibration]   
 ```
 
 ## Quick start

@@ -1,30 +1,37 @@
-"""Stage 2 (HPC workflow): generate a SLURM array job for the fit cases.
+"""Stage 1 (HPC workflow): generate a SLURM array job for the fit cases.
 
-Two modes:
+Usage:
 
-  Prep-on-node (recommended; smallest upload -- only config + raw PDS files):
-    python hpc/create_jobs.py --config config.yaml --venv <activate> [options]
-  Each work unit is one star (all its models run in one node process).
+    python hpc/create_jobs.py --config config.yaml --hours-per-fit 3
 
-  Pickle (pre-built FitCases from prepare_fitcases.py):
-    python hpc/create_jobs.py --fitcases Fitcases --venv <activate> [options]
-  Each work unit is one pickle (one star x one model).
+Each star is one work unit; all of its (still pending) models run in one node
+process. Everything else is handled with sensible defaults -- edit the
+constants below or the generated ``dispatch_fits.job`` if your cluster needs
+different partitions, memory, etc.
 
-Pooling (to respect a maximum array size, default 10000):
-  All models of a star always run together in one task. If there are still
-  more stars than --max-array, several stars are pooled into each task (run
-  sequentially on one node); the walltime is scaled up accordingly. Per-task
-  walltime = --hours-per-fit x models-per-star x stars-per-task (override with
-  --walltime).
+What it does:
 
-Writes three files in the current directory:
-    fitcase_list.txt   one work unit per line; the array index selects a slice
-    run_node.sh        executable: stage to scratch -> run -> rsync results back
-    dispatch_fits.job  sbatch script: SLURM directives + per-task dispatch
+  * Diagnoses which model fits already have results and lists only the work
+    that is still pending. Fully finished stars are dropped; partly finished
+    stars are listed with just their remaining models. Re-running the script
+    after a batch (or after an interrupted one) regenerates a job for exactly
+    the work that is left.
+  * Packages the Granalyse source into ``granalyse_src.tar.gz`` so it can be
+    shipped to node-local scratch. The fit then imports granalyse from the
+    node, not by reading the package back from the shared filesystem on every
+    call. The heavy parts of the repo (examples, docs, the venv) stay behind.
+  * Bakes in activation of the venv this script is run from (the ``.gvenv`` in
+    the Granalyse checkout), so no alias setup is required on the cluster.
 
-The fit runs entirely on node-local scratch (no shared-FS I/O during the fit);
-only results are copied back. Scratch is purged when the job ends. Work units
-whose results already exist are skipped.
+Writes four files in the current directory:
+    star_list.txt          one star per line: name <tab> models <tab> pds path
+    granalyse_src.tar.gz   the granalyse package + runner, staged to scratch
+    run_node.sh            executable: stage to scratch -> fit -> rsync back
+    dispatch_fits.job      sbatch script: SLURM directives + per-task dispatch
+
+The fit runs entirely on node-local scratch; results are rsynced back after
+every individual model so an interrupted task keeps everything it finished.
+Scratch is purged automatically when the job ends.
 """
 
 import argparse
@@ -33,78 +40,59 @@ import math
 import os
 import stat
 import sys
+import tarfile
+
+# ---- cluster defaults (edit here, or tweak the generated dispatch_fits.job) -
+RESULTS_DIR = "Results"
+JOB_NAME = "granalyse_fits"
+PARTITION = "q24,q26,q36,q40"        # comma-separated SLURM partition(s)
+MAX_ARRAY = 10000           # cap on array size; stars are pooled per task to fit
+MAX_PARALLEL = 256          # max simultaneously running array tasks
+CPUS = 1                    # one fit runs on a single core
+MEM_PER_CPU = "8G"
 
 
-# ---- run_node.sh templates (node-local staging) ---------------------------
-# {runner}/{config}/{results_dir}/{models} are filled by str.format; ${{...}}
-# survives as a literal ${...} shell variable. Each invocation handles one star
-# (config) or one pickle, stages to scratch, runs, rsyncs results, and cleans
-# its scratch so a pooled task does not accumulate data.
-
-_NODE_SH_CONFIG = """#!/bin/bash
-# Prep-on-node: stage one star's PDS to scratch, build + run all its models
-# there, copy results back, then clear the star's scratch.
-#   usage: run_node.sh <starname> <pds_path>
+# ---- run_node.sh template (node-local staging) ----------------------------
+# {config}/{results_dir} are filled by str.format; ${{...}} survives as a
+# literal ${...} shell variable. The granalyse source and the runner are taken
+# from the node-local copy via $GRAN_RUNNER (exported by dispatch_fits.job).
+_NODE_SH = """#!/bin/bash
+# Stage one star's PDS to node-local scratch, fit each requested model there,
+# and rsync the results back after every model -- so an interrupted task keeps
+# every model it has already finished. Scratch is purged when the job ends.
+#   usage: run_node.sh <starname> <models_csv> <pds_path>
 set -eo pipefail
 
 starname="$1"
-pds="$2"
+models="$2"
+pds="$3"
 
 scratchdir="/scratch/$SLURM_JOB_ID/$SLURM_ARRAY_TASK_ID"
 mkdir -p "$scratchdir/Results"
-
 cp "$pds" "$scratchdir/"
 cd "$scratchdir"
-python "{runner}" --config "{config}" --star "$starname" --model "{models}" \\
-    --pds-file "$scratchdir/$(basename "$pds")" --results-dir "$scratchdir/Results"
 
-mkdir -p "$SLURM_SUBMIT_DIR/{results_dir}/$starname"
-rsync -aqz "$scratchdir/Results/$starname/" "$SLURM_SUBMIT_DIR/{results_dir}/$starname/"
-rm -rf "$scratchdir/$(basename "$pds")" "$scratchdir/Results/$starname"
-"""
+dest="$SLURM_SUBMIT_DIR/{results_dir}/$starname"
+mkdir -p "$dest"
 
-_NODE_SH_PICKLE = """#!/bin/bash
-# Pickle mode: stage one pre-built FitCase to scratch, run it, copy results back.
-#   usage: run_node.sh <fitcase.pkl>
-set -eo pipefail
-
-fitcase="$1"
-starname=$(basename "$(dirname "$fitcase")")
-modname=$(basename "$fitcase" .pkl)
-
-scratchdir="/scratch/$SLURM_JOB_ID/$SLURM_ARRAY_TASK_ID"
-mkdir -p "$scratchdir/Fitcases/$starname" "$scratchdir/Results"
-
-cp "$fitcase" "$scratchdir/Fitcases/$starname/"
-cd "$scratchdir"
-python "{runner}" "Fitcases/$starname/$modname.pkl" --results-dir "$scratchdir/Results"
-
-mkdir -p "$SLURM_SUBMIT_DIR/{results_dir}/$starname"
-rsync -aqz "$scratchdir/Results/$starname/" "$SLURM_SUBMIT_DIR/{results_dir}/$starname/"
-rm -rf "$scratchdir/Fitcases/$starname" "$scratchdir/Results/$starname"
-"""
-
-# ---- per-task dispatch blocks (inside dispatch_fits.job) -------------------
-# Each array task processes a slice of {units_per_task} consecutive list lines.
-# Field 1 (star or pickle path) must be space-free; for config mode the PDS
-# path (field 2, line remainder) may contain spaces.
-_DISPATCH_CONFIG = """units_per_task={units_per_task}
-start=$(( (SLURM_ARRAY_TASK_ID - 1) * units_per_task + 1 ))
-end=$(( SLURM_ARRAY_TASK_ID * units_per_task ))
-awk "NR >= $start && NR <= $end" {list_file} | while read -r starname pds; do
-    [ -z "$starname" ] && continue
-    echo "----- Star $starname -----"
-    "$SLURM_SUBMIT_DIR/run_node.sh" "$starname" "$pds"
+IFS=',' read -ra modellist <<< "$models"
+for model in "${{modellist[@]}}"; do
+    python "$GRAN_RUNNER" --config "{config}" --star "$starname" --model "$model" \\
+        --pds-file "$scratchdir/$(basename "$pds")" --results-dir "$scratchdir/Results"
+    rsync -aqz "$scratchdir/Results/$starname/" "$dest/"
 done
 """
 
-_DISPATCH_PICKLE = """units_per_task={units_per_task}
+# ---- per-task dispatch block (inside dispatch_fits.job) --------------------
+# Each array task processes a slice of {units_per_task} consecutive list lines.
+# Fields are tab-separated: star name, comma-separated models, PDS path.
+_DISPATCH = """units_per_task={units_per_task}
 start=$(( (SLURM_ARRAY_TASK_ID - 1) * units_per_task + 1 ))
 end=$(( SLURM_ARRAY_TASK_ID * units_per_task ))
-awk "NR >= $start && NR <= $end" {list_file} | while read -r fitcase; do
-    [ -z "$fitcase" ] && continue
-    echo "----- $fitcase -----"
-    "$SLURM_SUBMIT_DIR/run_node.sh" "$fitcase"
+awk -F'\\t' "NR >= $start && NR <= $end" {list_file} | while IFS=$'\\t' read -r starname models pds; do
+    [ -z "$starname" ] && continue
+    echo "----- Star $starname (models: $models) -----"
+    "$SLURM_SUBMIT_DIR/run_node.sh" "$starname" "$models" "$pds"
 done
 """
 
@@ -124,118 +112,132 @@ def _fmt_walltime(hours):
     return f"{d}-{h:02d}:{m:02d}:{s:02d}" if d else f"{h:02d}:{m:02d}:{s:02d}"
 
 
-def _pending_config(args):
-    """(units, node_sh, dispatch, fits_per_unit, models_str) for prep-on-node.
+def _pending_units(config, results_dir):
+    """Tab-separated 'name<TAB>models<TAB>pds' lines for stars with work left.
 
-    One work unit per star; a star is skipped only when every model is done.
+    Diagnoses existing results: fully finished stars are dropped, partly
+    finished stars keep only their remaining models.
     """
     from granalyse.config import load_config
-    cfg = load_config(args.config)
-    modnames = [f"model_{m}" for m in cfg.models]
+    cfg = load_config(config)
     units = []
     for star in cfg.stars:
+        pending = [m for m in cfg.models
+                   if not _has_results(results_dir, star.name, f"model_{m}")]
+        if not pending:
+            continue
         pds = os.path.abspath(star.pds_file)
-        if all(_has_results(args.results_dir, star.name, mn) for mn in modnames):
-            print(f"skipping {star.name} (all models have results)")
-        else:
-            units.append(f"{star.name} {pds}")
-    return units, _NODE_SH_CONFIG, _DISPATCH_CONFIG, len(cfg.models), ",".join(cfg.models)
+        units.append("\t".join((star.name, ",".join(pending), pds)))
+    max_models = max((len(u.split("\t")[1].split(",")) for u in units), default=0)
+    return units, max_models
 
 
-def _pending_pickles(args):
-    """(units, node_sh, dispatch, fits_per_unit, models_str) for pickle mode."""
-    fitcases = sorted(glob.glob(os.path.join(args.fitcases, "*", "model_*.pkl")))
-    units = []
-    for case in fitcases:
-        star = os.path.basename(os.path.dirname(case))
-        modname = os.path.basename(case).replace(".pkl", "")
-        if _has_results(args.results_dir, star, modname):
-            print(f"skipping {case} (results exist)")
-        else:
-            units.append(os.path.abspath(case))
-    return units, _NODE_SH_PICKLE, _DISPATCH_PICKLE, 1, ""
+def _detect_venv(repo_dir):
+    """Activate script of the venv to source on the node.
+
+    Prefers the venv this script is being run from (so the generated job uses
+    the same environment), falling back to the .gvenv in the repo checkout.
+    """
+    candidates = []
+    if os.environ.get("VIRTUAL_ENV"):
+        candidates.append(os.path.join(os.environ["VIRTUAL_ENV"], "bin", "activate"))
+    candidates.append(os.path.join(sys.prefix, "bin", "activate"))
+    candidates.append(os.path.join(repo_dir, ".gvenv", "bin", "activate"))
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    raise SystemExit(
+        "Could not find a venv to activate. Run this from the Granalyse venv, "
+        f"or create one at {os.path.join(repo_dir, '.gvenv')}.")
+
+
+def _build_source_tarball(repo_dir, dest):
+    """Package the granalyse source + runner for staging to node scratch.
+
+    Only the importable source is shipped (the package and the runner); the
+    examples, docs, calibration data and the venv are deliberately left behind.
+    """
+    def _no_cache(ti):
+        parts = ti.name.split("/")
+        if "__pycache__" in parts or ti.name.endswith(".pyc"):
+            return None
+        return ti
+
+    with tarfile.open(dest, "w:gz") as tar:
+        tar.add(os.path.join(repo_dir, "granalyse"), arcname="granalyse",
+                filter=_no_cache)
+        tar.add(os.path.join(repo_dir, "hpc", "run_fitcase.py"),
+                arcname="run_fitcase.py")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    src = parser.add_mutually_exclusive_group(required=True)
-    src.add_argument("--config", help="Granalyse YAML config (prep-on-node mode)")
-    src.add_argument("--fitcases",
-                     help="Directory with pickled fit cases (pickle mode)")
-    parser.add_argument("--results-dir", default="Results")
-    parser.add_argument("--job-name", default="granalyse_fits")
-    parser.add_argument("--partition", default="normal",
-                        help="Comma-separated SLURM partition(s)")
-    parser.add_argument("--hours-per-fit", type=float, default=1.0,
+    parser.add_argument("--config", required=True,
+                        help="Granalyse YAML config")
+    parser.add_argument("--hours-per-fit", type=float, required=True,
                         help="Estimated walltime per single model fit, in hours "
-                             "(used to size --walltime; default 1.0)")
-    parser.add_argument("--walltime", default=None,
-                        help="Override the auto-computed per-task walltime "
-                             "(e.g. 12:00:00 or 1-00:00:00)")
-    parser.add_argument("--max-array", type=int, default=10000,
-                        help="Maximum SLURM array size; stars are pooled per task "
-                             "until the array fits (default 10000)")
-    parser.add_argument("--cpus", type=int, default=1,
-                        help="CPUs per array task; one fit runs on a single core")
-    parser.add_argument("--mem-per-cpu", default="8G")
-    parser.add_argument("--max-parallel", type=int, default=256,
-                        help="Max simultaneously running array tasks (SLURM array %% throttle)")
-    parser.add_argument("--venv", required=True,
-                        help="Path to the activate script of a venv with granalyse installed")
+                             "(used to size the per-task --time)")
     args = parser.parse_args()
 
-    units, node_sh, dispatch_block, fits_per_unit, models = (
-        _pending_config(args) if args.config else _pending_pickles(args))
+    repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+    units, max_models = _pending_units(args.config, RESULTS_DIR)
     if not units:
-        print("Nothing to do: all fit cases have results.")
+        print("Nothing to do: all fits already have results.")
         sys.exit(0)
 
-    list_file = os.path.abspath("fitcase_list.txt")
+    list_file = os.path.abspath("star_list.txt")
     with open(list_file, "w") as f:
         f.write("\n".join(units) + "\n")
 
-    # Pool work units into tasks so the array stays within --max-array.
+    _build_source_tarball(repo_dir, "granalyse_src.tar.gz")
+
+    # Pool stars into tasks so the array stays within MAX_ARRAY.
     n_units = len(units)
-    units_per_task = max(1, math.ceil(n_units / args.max_array))
+    units_per_task = max(1, math.ceil(n_units / MAX_ARRAY))
     n_tasks = math.ceil(n_units / units_per_task)
-    limit = min(n_tasks, args.max_parallel)
+    limit = min(n_tasks, MAX_PARALLEL)
 
-    # Per-task walltime: hours_per_fit x fits-per-star x stars-per-task.
-    fits_per_task = fits_per_unit * units_per_task
-    walltime = args.walltime or _fmt_walltime(args.hours_per_fit * fits_per_task)
+    # Per-task walltime: hours_per_fit x (models per star) x (stars per task).
+    walltime = _fmt_walltime(args.hours_per_fit * max_models * units_per_task)
 
-    repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    runner = os.path.join(repo_dir, "hpc", "run_fitcase.py")
-    config_abs = os.path.abspath(args.config) if args.config else ""
+    venv = _detect_venv(repo_dir)
+    config_abs = os.path.abspath(args.config)
 
-    node_sh = node_sh.format(runner=runner, config=config_abs,
-                             results_dir=args.results_dir, models=models)
+    node_sh = _NODE_SH.format(config=config_abs, results_dir=RESULTS_DIR)
     with open("run_node.sh", "w") as f:
         f.write(node_sh)
     os.chmod("run_node.sh", os.stat("run_node.sh").st_mode | stat.S_IEXEC |
              stat.S_IXGRP | stat.S_IXOTH)
 
-    dispatch_block = dispatch_block.format(list_file=list_file,
-                                           units_per_task=units_per_task)
+    dispatch_block = _DISPATCH.format(list_file=list_file,
+                                      units_per_task=units_per_task)
 
     job = f"""#!/bin/bash
 
-#SBATCH --job-name={args.job_name}
+#SBATCH --job-name={JOB_NAME}
 #SBATCH --output=Outputs/%x_%A_%a.out
 #SBATCH --time={walltime}
-#SBATCH --partition={args.partition}
-#SBATCH --cpus-per-task={args.cpus}
-#SBATCH --mem-per-cpu={args.mem_per_cpu}
+#SBATCH --partition={PARTITION}
+#SBATCH --cpus-per-task={CPUS}
+#SBATCH --mem-per-cpu={MEM_PER_CPU}
 #SBATCH --array=1-{n_tasks}%{limit}
 #SBATCH --export=NONE
 
 echo "========= Job started at `date` on `hostname -s` =========="
-export OMP_NUM_THREADS={args.cpus}
+export OMP_NUM_THREADS={CPUS}
 
-source "{args.venv}"
+source "{venv}"
 cd "$SLURM_SUBMIT_DIR"
+
+# Ship the granalyse source to node-local scratch and import it from there, so
+# the fit never reads the package back from the shared filesystem.
+src_scratch="/scratch/$SLURM_JOB_ID/$SLURM_ARRAY_TASK_ID/granalyse_src"
+mkdir -p "$src_scratch"
+tar -xzf "$SLURM_SUBMIT_DIR/granalyse_src.tar.gz" -C "$src_scratch"
+export PYTHONPATH="$src_scratch${{PYTHONPATH:+:$PYTHONPATH}}"
+export GRAN_RUNNER="$src_scratch/run_fitcase.py"
 
 {dispatch_block}
 echo "========= Job finished at `date` =========="
@@ -245,14 +247,8 @@ echo "========= Job finished at `date` =========="
     with open("dispatch_fits.job", "w") as f:
         f.write(job)
 
-    mode = "prep-on-node" if args.config else "pickle"
-    star_word = "stars" if args.config else "pickles"
-    print(f"\nWrote dispatch_fits.job + run_node.sh ({mode} mode).")
-    print(f"  {n_units} {star_word} -> {n_tasks} array tasks "
-          f"({units_per_task} per task x {fits_per_unit} fit(s) each), "
-          f"max {limit} parallel.")
-    print(f"  Walltime/task: {walltime}  (={args.hours_per_fit} h x {fits_per_task} fits)")
-    print(f"Submit with:  sbatch dispatch_fits.job")
+    print(f"Wrote dispatch_fits.job ({n_units} stars -> {n_tasks} array tasks).")
+    print("Submit with:  sbatch dispatch_fits.job")
 
 
 if __name__ == "__main__":
