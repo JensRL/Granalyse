@@ -11,6 +11,10 @@ from .star import Star
 VALID_PULSMODS = ("Gaussian", "Peakbogging")
 VALID_MISSIONS = ("Kepler", "TESS")
 
+# Prefer the libyaml-backed safe loader: ~5x faster on large inline-star configs
+# (each HPC node task parses the whole config to pick out its one star).
+_YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
 
 @dataclass
 class RunConfig:
@@ -33,14 +37,36 @@ class RunConfig:
 def load_config(path):
     """Read and validate a YAML run configuration; returns a RunConfig."""
     with open(path) as f:
-        raw = yaml.safe_load(f)
+        raw = yaml.load(f, Loader=_YAML_LOADER)
 
     if not isinstance(raw, dict):
         raise ValueError(f"Config {path} must be a YAML mapping.")
-    if "stars" not in raw or not raw["stars"]:
-        raise ValueError("Config must list at least one star under 'stars'.")
     if "models" not in raw or not raw["models"]:
         raise ValueError("Config must list at least one background model under 'models'.")
+
+    # Stars come from an inline 'stars' list or a 'stars_csv' table (+ optional
+    # 'pds_dir' to match PDS files by name). stars_csv/pds_dir are resolved
+    # relative to the config file so the run is portable across machines.
+    config_dir = os.path.dirname(os.path.abspath(path))
+    if raw.get("stars_csv"):
+        if raw.get("stars"):
+            raise ValueError("Config has both 'stars' and 'stars_csv'; use only one.")
+        from .make_config import collect_star_records
+
+        def _rel(p):
+            return p if os.path.isabs(p) else os.path.join(config_dir, p)
+
+        pds_dir = raw.get("pds_dir")
+        star_entries = collect_star_records(
+            _rel(raw["stars_csv"]),
+            _rel(pds_dir) if pds_dir else None,
+            raw.get("pds_pattern", "*.pow"),
+            raw.get("mission", "Kepler"),
+        )
+    elif raw.get("stars"):
+        star_entries = raw["stars"]
+    else:
+        raise ValueError("Config must list stars inline under 'stars' or via 'stars_csv'.")
 
     models = [get_model(m).name for m in raw["models"]]  # validates + canonicalises
 
@@ -53,15 +79,15 @@ def load_config(path):
 
     stars = []
     kinds = {}
-    for entry in raw["stars"]:
-        if "name" not in entry or "pds_file" not in entry:
+    for entry in star_entries:
+        if not entry.get("name") or not entry.get("pds_file"):
             raise ValueError(f"Each star needs 'name' and 'pds_file'; got {entry}.")
-        mission = entry.get("mission", "Kepler")
+        mission = entry.get("mission") or "Kepler"
         if mission not in VALID_MISSIONS:
             raise ValueError(f"Star '{entry['name']}': mission must be one of "
                              f"{VALID_MISSIONS}, got '{mission}'.")
-        kinds[entry["name"]] = entry.get("kind", "star")
-        if kinds[entry["name"]] not in ("star", "simulation"):
+        kinds[str(entry["name"])] = entry.get("kind") or "star"
+        if kinds[str(entry["name"])] not in ("star", "simulation"):
             raise ValueError(f"Star '{entry['name']}': kind must be 'star' or 'simulation'.")
         name = str(entry["name"])
         # Reject names that could cause path traversal

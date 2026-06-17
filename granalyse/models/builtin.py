@@ -392,9 +392,9 @@ def _obs_T(df, corr_inference=None):
 def _plot_components_J(ax, freq, eta, params, power_max):
     # J's joint denominator has no meaningful per-component profiles;
     # mark the two characteristic frequencies instead.
-    for p in ("b", "d"):
+    for p, ls in (("b", "dashed"), ("d", "dotted")):
         val = float(params[p])
-        ax.vlines(val, 0, 0.8 * power_max, colors="g", linestyles="dashed",
+        ax.vlines(val, 0, 0.8 * power_max, colors="g", linestyles=ls,
                   linewidth=1, label=f"{p} = {val:.2f} " + r"$\mu$Hz")
     return []
 

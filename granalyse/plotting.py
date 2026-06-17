@@ -30,6 +30,20 @@ from .data import bin_data_simplistic
 
 plt.rcParams["agg.path.chunksize"] = 20000
 
+# Corner-plot panels are dense filled contours; left as vectors they dominate
+# the output size. Rasterising the data layers (everything below this zorder)
+# while keeping axes, ticks, labels and titles as vectors cuts the PDF ~2.5x.
+_CORNER_RASTER_ZORDER = 10
+_CORNER_RASTER_DPI = 150
+
+
+def _save_corner(fig, path):
+    """Save a corner figure with its dense contour/scatter layers rasterised
+    and all text/axes kept as vectors."""
+    for ax in fig.get_axes():
+        ax.set_rasterization_zorder(_CORNER_RASTER_ZORDER)
+    fig.savefig(path, dpi=_CORNER_RASTER_DPI)
+
 
 def _peakbogging_likelihood_plotting(P, dof, mod_back, beta, term1):
     """Per-frequency background and peak log-likelihoods (for visualisation)."""
@@ -170,6 +184,9 @@ def prior_predictive_PDS(fit, model=None):
     if model is None:
         model = get_model(fit.model)
 
+    if fit.prior_samples is None:
+        from .priors import draw_prior_samples
+        fit.prior_samples = draw_prior_samples(fit)
     prior_samples = fit.prior_samples
     freq = fit.freq
     power = fit.power
@@ -264,10 +281,7 @@ def prior_predictive_PDS(fit, model=None):
     ax.set_xlabel(r"Frequency [$\mu$Hz]")
     ax.set_ylabel(r"Power Density [ppm$^2/\mu$Hz]")
     ax.set_title(f"Prior predictive PDS for model {fit.model} for {fit.name}")
-    if np.min(freq) < 1:
-        ax.set_xlim(1, np.max(freq))
-    else:
-        ax.set_xlim(np.min(freq), np.max(freq))
+    ax.set_xlim(0.5*np.min(freq), np.max(freq))
     lower_ylim = np.mean(power[-100:]) - 0.8 * np.mean(power[-100:])
     ax.set_ylim(lower_ylim, np.max(power) + 0.3 * np.max(power))
 
@@ -288,6 +302,10 @@ def present_fit(fit, model=None):
     """Full posterior presentation: PDS fit figure + corner plots."""
     if model is None:
         model = get_model(fit.model)
+
+    if fit.prior_samples is None:
+        from .priors import draw_prior_samples
+        fit.prior_samples = draw_prior_samples(fit)
 
     # ======================== PDS figure ========================
     if fit.pulsmod == "Gaussian":
@@ -606,7 +624,7 @@ def present_fit(fit, model=None):
             )
 
     # ---- Axis formatting ----
-    legend = ax1.legend(loc="upper center", fontsize=8, facecolor="white",
+    legend = ax1.legend(loc="upper right", fontsize=8, facecolor="white",
                         framealpha=1, edgecolor="black", ncol=2,
                         bbox_to_anchor=(0.65, 0.99))
     legend.set_zorder(100)
@@ -615,14 +633,14 @@ def present_fit(fit, model=None):
     ax1.set_xlabel(r"Frequency [$\mu$Hz]")
     ax1.set_ylabel(r"Power Density [ppm$^2/\mu$Hz]")
     ax1.set_title(f"Model {fit.model} for {fit.name}", fontsize=16)
-    ax1.set_xlim(5, np.max(freq))
+    ax1.set_xlim(0.5*np.min(freq), np.max(freq))
 
     if fit.bin_data:
         lower_ylim = np.min(power) - 0.3 * np.min(power)
-        upper_ylim = np.max(fit.power_raw) - 0.2 * np.max(fit.power_raw)
+        data_max = np.max(power)
     else:
         lower_ylim = np.min(fit.power_binned) - 0.3 * np.min(fit.power_binned)
-        upper_ylim = np.max(fit.power_binned) - 0.2 * np.max(fit.power_binned)
+        data_max = np.max(fit.power_binned)
 
     # Ensure faint components are visible
     for comp_amp in component_levels:
@@ -631,6 +649,13 @@ def present_fit(fit, model=None):
 
     if lower_ylim < 1e-3 and fit.data_format == "STAR":
         lower_ylim = 1e-3
+
+    # Place data_max at 75 % of the log axis height, keeping the top 20 % clear
+    # of the legend. On a log scale: hi = lo * (data_max / lo) ** (1 / 0.75)
+    log_lo = np.log10(max(lower_ylim, 1e-10))
+    log_peak = np.log10(max(data_max, lower_ylim * 10))
+    upper_ylim = 10 ** (log_lo + (log_peak - log_lo) / 0.75)
+
     ax1.set_ylim(lower_ylim, upper_ylim)
 
     plt.draw()
@@ -660,7 +685,7 @@ def present_fit(fit, model=None):
         cornerfig.suptitle(
             f"Posterior corner plot of model {fit.model} for {fit.name}", fontsize=40
         )
-        cornerfig.savefig(fit.Cornerfigname, dpi=300)
+        _save_corner(cornerfig, fit.Cornerfigname)
         plt.close(cornerfig)
         print("Posterior corner plot saved successfully")
     except ValueError as e:
@@ -746,7 +771,7 @@ def present_fit(fit, model=None):
                 fontsize=40, color="red",
             )
 
-        corner2.savefig(fit.PriorPostCornerfigname, dpi=300)
+        _save_corner(corner2, fit.PriorPostCornerfigname)
         print("Prior/Posterior corner plot saved")
         plt.close(corner2)
 
@@ -796,7 +821,7 @@ def present_fit(fit, model=None):
             )
             # Filename: Cornerfigname with _corrparams suffix
             plotname = fit.Cornerfigname.replace(".pdf", "_corrparams.pdf")
-            corrfig.savefig(plotname, dpi=300)
+            _save_corner(corrfig, plotname)
             print("Correlated inference corner plot saved")
             plt.close(corrfig)
         except ValueError as e:

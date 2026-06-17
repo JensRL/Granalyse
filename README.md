@@ -6,7 +6,9 @@ Granalyse fits granulation background models to stellar power density spectra
 with Bayesian nested sampling, and infers stellar radii from the resulting
 granulation properties through calibrated granulation–radius relations.
 
-Contributors: Jens R. Larsen, Mia S. Lundkvist, Guy R. Davies, Martin B. Nielsen, 
+Author: Jens R. Larsen
+
+Contributors: Mia S. Lundkvist, Guy R. Davies, Martin B. Nielsen. 
 
 **Work in progress repository!**
 
@@ -53,11 +55,10 @@ then run:
 granalyse run config.yaml
 ```
 
-**Computation time**: note that the nested sampling is computationally expensive and, 
-depending on the duration and quality of the PDS, the runtime per model may reach up to 1h.
+**Computation time**: note that the nested sampling is computationally expensive. Depending on the duration, quality, and degree of binning of the PDS, the runtime per model may reach up to 1h.
 
-**Output size**: the saved figures and posteriors can be quite large, meaning around 40-50 MB 
-of data is generated for each chosen model per star.
+**Output size**: the saved figures and posteriors can be quite large, resulting in up to 40-50 MB 
+of data being generated for each chosen model per star.
 
 
 ## What it does

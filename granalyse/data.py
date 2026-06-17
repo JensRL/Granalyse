@@ -144,11 +144,12 @@ def mask_systematics(freq, power, numax, sys_dict=SC_sys_peaks,
     win_lengths += (win_lengths % 2 == 0)
     csum = np.concatenate(([0.0], np.cumsum(power)))
     half = win_lengths // 2
-    local_mean = np.empty_like(power, dtype=float)
-    for i in range(n):
-        L = max(0, i - half[i])
-        R = min(n, i + half[i] + 1)
-        local_mean[i] = (csum[R] - csum[L]) / (R - L)
+    # Variable-width rolling mean, vectorised over all bins (identical to the
+    # previous per-bin loop: window [i-half, i+half] clipped to [0, n)).
+    idx = np.arange(n)
+    L = np.maximum(0, idx - half)
+    R = np.minimum(n, idx + half + 1)
+    local_mean = (csum[R] - csum[L]) / (R - L)
 
     # ---------- Seed detection ----------
     peaks = np.where(power > threshold * local_mean)[0]

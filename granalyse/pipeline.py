@@ -2,6 +2,7 @@
 fits for all chosen models -> radius inference (BMA) -> summary output."""
 
 import contextlib
+import copy
 import json
 import os
 import sys
@@ -14,7 +15,7 @@ from .models import get_model
 from .plotting import present_fit, prior_predictive_PDS, radius_posterior_plot
 from .priors import set_priors
 from .radius import infer_radius
-from .results import save_run_output
+from .results import compute_normalised_amplitudes, save_fit_params, save_run_output
 from .sampling import run_fit
 from .star import FitCase
 
@@ -45,17 +46,53 @@ def _result_dirname(model_name, cfg):
     return "_".join(parts)
 
 
-def prepare_fit_case(star, model_name, cfg):
-    """Build a fully prepared FitCase (data, parameters, priors, paths)."""
-    model = get_model(model_name)
-    kind = cfg.star_kinds.get(star.name, "star")
+def _star_numax(star):
+    """numax given directly, or estimated from logg/teff."""
+    if star.numax is not None:
+        return float(star.numax)
+    return float(gdata.calc_numax(star.logg, star.teff))
 
+
+def _assign_paths(fit, star_name, model, cfg):
+    """Set all output paths on a FitCase (original naming scheme). FitData is
+    written gzip-compressed; the .csv.gz extension drives the compression."""
+    respath = os.path.join(cfg.output_dir, star_name, _result_dirname(model.name, cfg))
+    fit.respath = respath + os.sep
+    fit.fitdatafile = os.path.join(respath, f"FitData_model_{model.name}.csv.gz")
+    fit.fitresultsfile = os.path.join(respath, f"FitResults_model_{model.name}.csv")
+    fit.priorpredictivePDSfigname = os.path.join(respath, "PriorPredictivePDS.pdf")
+    fit.PDSfigname = os.path.join(respath, "PDS_Fit.pdf")
+    fit.Cornerfigname = os.path.join(respath, "CornerPlot.pdf")
+    fit.priorCornerfigname = os.path.join(respath, "PriorCornerPlot.pdf")
+    fit.PriorPostCornerfigname = os.path.join(respath, "PriorPostCornerPlot.pdf")
+
+
+def _resolve_fitdatafile(fit):
+    """Point fit.fitdatafile at an existing FitData file, preferring the
+    compressed name but falling back to a legacy uncompressed .csv from older
+    runs. Returns True if a FitData file exists."""
+    if not os.path.exists(fit.fitdatafile) and fit.fitdatafile.endswith(".csv.gz"):
+        legacy = fit.fitdatafile[:-3]
+        if os.path.exists(legacy):
+            fit.fitdatafile = legacy
+    return os.path.exists(fit.fitdatafile)
+
+
+def prepare_star_data(star, cfg):
+    """Prepare the star-level data products shared by every model: read the
+    PDS, mask systematics, bin, cut low frequencies and compute eta.
+
+    Returns a FitCase carrying the processed spectrum and stellar metadata,
+    with no model-specific parameters, priors or output paths set. Reused
+    across a star's models so the spectrum is read and processed only once.
+    """
+    kind = cfg.star_kinds.get(star.name, "star")
     numax = star.numax
     if numax is None:
         numax = gdata.calc_numax(star.logg, star.teff)
         print(f"{star.name}: numax = {numax:.1f} muHz from logg/teff scaling")
 
-    fit = FitCase(name=star.name, model=model.name, seed=cfg.seed)
+    fit = FitCase(name=star.name, model="", seed=cfg.seed)
     fit.PDSfile = star.pds_file
     fit.numax = float(numax)
     fit.dnu = 0.26 * fit.numax**0.772
@@ -69,7 +106,7 @@ def prepare_fit_case(star, model_name, cfg):
     fit.feh_err = star.feh_err
     fit.mission = star.mission
 
-    # Data preparation chain
+    # Data preparation chain (identical across models)
     freq, power = gdata.read_data(fit)
     fit.nyquist = star.nyquist if star.nyquist is not None else freq[-1]
     if kind == "star":
@@ -81,23 +118,81 @@ def prepare_fit_case(star, model_name, cfg):
                                                cfg.low_frequency_cut)
     fit.freq, fit.power = freq, power
     fit.eta = gdata.calc_eta(fit)
+    return fit
+
+
+def prepare_fit_case(star, model_name, cfg, star_data=None):
+    """Build a fully prepared FitCase (data, parameters, priors, paths).
+
+    If star_data (a FitCase from prepare_star_data) is given, the prepared
+    spectrum is reused, avoiding a redundant read/bin per model; otherwise the
+    star-level data is prepared here. prior_samples are left unset and drawn
+    lazily at plot time (keeps prepared pickles small).
+    """
+    model = get_model(model_name)
+    if star_data is None:
+        star_data = prepare_star_data(star, cfg)
+    fit = copy.deepcopy(star_data)
+    fit.model = model.name
 
     # Parameters, initial guesses, priors
     model.configure_fit_parameters(fit)
     fit.inits = model.inits(fit.numax)
-    fit.priors, fit.prior_samples = set_priors(fit, model)
+    fit.priors = set_priors(fit, model)
+    fit.prior_samples = None  # drawn lazily in plotting (saves prep time + pickle size)
 
-    # Output paths (original naming scheme)
-    respath = os.path.join(cfg.output_dir, star.name, _result_dirname(model.name, cfg))
-    fit.respath = respath + os.sep
-    fit.fitdatafile = os.path.join(respath, f"FitData_model_{model.name}.csv")
-    fit.fitresultsfile = os.path.join(respath, f"FitResults_model_{model.name}.csv")
-    fit.priorpredictivePDSfigname = os.path.join(respath, "PriorPredictivePDS.pdf")
-    fit.PDSfigname = os.path.join(respath, "PDS_Fit.pdf")
-    fit.Cornerfigname = os.path.join(respath, "CornerPlot.pdf")
-    fit.priorCornerfigname = os.path.join(respath, "PriorCornerPlot.pdf")
-    fit.PriorPostCornerfigname = os.path.join(respath, "PriorPostCornerPlot.pdf")
+    _assign_paths(fit, star.name, model, cfg)
     return fit
+
+
+def prepare_fit_case_light(star, model_name, cfg):
+    """Build a FitCase with metadata, fit-parameter configuration and output
+    paths but WITHOUT reading or preparing the spectrum.
+
+    Sufficient to detect and finalise an already-completed fit (load posteriors,
+    recompute the result table) without the cost of reading/binning the PDS;
+    not enough to run a new fit (no priors/data). Used by the skip_replot fast
+    path. fit.fitdatafile is resolved to an existing file if one is present.
+    """
+    model = get_model(model_name)
+    fit = FitCase(name=star.name, model=model.name, seed=cfg.seed)
+    fit.numax = _star_numax(star)
+    fit.dnu = 0.26 * fit.numax**0.772
+    fit.pulsmod = cfg.pulsation_model
+    fit.corr_inference = cfg.correlated_inference
+    fit.bin_data = cfg.bin_data
+    fit.teff = star.teff
+    fit.teff_err = star.teff_err
+    fit.feh = star.feh
+    fit.feh_err = star.feh_err
+    fit.mission = star.mission
+
+    model.configure_fit_parameters(fit)
+    _assign_paths(fit, star.name, model, cfg)
+    _resolve_fitdatafile(fit)
+    return fit
+
+
+def finalize_existing_fit(fit, model):
+    """Load a previously completed fit from disk and (re)compute its result
+    table without re-running the sampler or preparing the spectrum.
+
+    Requires only fit.fitparams (from configure_fit_parameters) and the output
+    paths; the granulation normalisation reads fit.fitresults, never the raw
+    data. Returns (fit, evidence, evidence_err).
+    """
+    evidence_file = os.path.join(fit.respath, f"Evidence_model_{model.name}.txt")
+    fit.fitdata = pd.read_csv(fit.fitdatafile)
+    if not os.path.exists(evidence_file):
+        raise RuntimeError(
+            f"FitData found for {fit.name} / model {model.name} but evidence file "
+            f"is missing (partial/corrupt run): {evidence_file}"
+        )
+    evidence, evidence_err = np.loadtxt(evidence_file)
+    fit.fitresults = save_fit_params(fit, model=model)
+    fit = compute_normalised_amplitudes(fit, model=model)
+    fit.fitresults.to_csv(fit.fitresultsfile, index=False, header=True)
+    return fit, evidence, evidence_err
 
 
 def run_single_fit(fit, model=None, make_plots=True, skip_replot=False):
@@ -111,7 +206,9 @@ def run_single_fit(fit, model=None, make_plots=True, skip_replot=False):
         model = get_model(fit.model)
     os.makedirs(fit.respath, exist_ok=True)
 
-    existing = os.path.exists(fit.fitdatafile)
+    # Resume from an existing run; fall back to a legacy uncompressed FitData
+    # file so older result directories remain resumable (pandas reads both).
+    existing = _resolve_fitdatafile(fit)
     # Only suppress plotting when reusing an existing fit; new fits still plot.
     do_plots = make_plots and not (existing and skip_replot)
     if existing and skip_replot:
@@ -120,20 +217,9 @@ def run_single_fit(fit, model=None, make_plots=True, skip_replot=False):
     if do_plots:
         prior_predictive_PDS(fit, model)
 
-    evidence_file = os.path.join(fit.respath, f"Evidence_model_{model.name}.txt")
     if existing:
         print(f"{fit.name} / model {model.name}: existing fit found, loading results")
-        fit.fitdata = pd.read_csv(fit.fitdatafile)
-        if not os.path.exists(evidence_file):
-            raise RuntimeError(
-                f"FitData found for {fit.name} / model {model.name} but evidence file "
-                f"is missing (partial/corrupt run): {evidence_file}"
-            )
-        evidence, evidence_err = np.loadtxt(evidence_file)
-        from .results import compute_normalised_amplitudes, save_fit_params
-        fit.fitresults = save_fit_params(fit, model=model)
-        fit = compute_normalised_amplitudes(fit, model=model)
-        fit.fitresults.to_csv(fit.fitresultsfile, index=False, header=True)
+        fit, evidence, evidence_err = finalize_existing_fit(fit, model)
     else:
         print(f"{fit.name} / model {model.name}: starting nested sampling...")
         samples, cov, evidence, evidence_err = run_fit(fit, model)
@@ -165,14 +251,33 @@ def _run_star_logged(star, cfg, star_dir):
     evidences = {}
     summary = {"star": star.name, "models": {}}
 
+    # The spectrum is read/binned once per star and shared across its models;
+    # prepared lazily so the skip_replot fast path can avoid it entirely.
+    star_data = None
     for model_name in cfg.models:
         model = get_model(model_name)
         print("-" * 70)
         print(f"  {star.name}  |  model {model.name}")
         print("-" * 70)
-        fit = prepare_fit_case(star, model_name, cfg)
-        fit, evidence, evidence_err = run_single_fit(
-            fit, model, skip_replot=cfg.skip_replot)
+
+        fit = None
+        if cfg.skip_replot:
+            # Fast path: finalise an already-completed fit without reading the
+            # spectrum. Falls through to a full run if no results exist yet.
+            light = prepare_fit_case_light(star, model_name, cfg)
+            if os.path.exists(light.fitdatafile):
+                print(f"{star.name} / model {model.name}: skip_replot -- existing "
+                      "results, finalising without spectrum preparation")
+                os.makedirs(light.respath, exist_ok=True)
+                fit, evidence, evidence_err = finalize_existing_fit(light, model)
+
+        if fit is None:
+            if star_data is None:
+                star_data = prepare_star_data(star, cfg)
+            fit = prepare_fit_case(star, model_name, cfg, star_data=star_data)
+            fit, evidence, evidence_err = run_single_fit(
+                fit, model, skip_replot=cfg.skip_replot)
+
         posteriors[model.name] = fit.fitdata
         evidences[model.name] = (evidence, evidence_err)
         med = {p: float(fit.fitresults[p][0]) for p in fit.fitresults.columns}

@@ -6,7 +6,7 @@ functionality.
 """
 
 import jax.numpy as jnp
-from functools import partial
+from functools import partial, cached_property
 import jax
 import numpy as np
 import jax.scipy.special as jsp
@@ -48,8 +48,6 @@ class beta():
 
         self.bm1 = self.b - 1
 
-        self._set_stdatt()
-
     def rvs(self, size=None):
         """ Draw random variable from distribution
 
@@ -65,14 +63,19 @@ class beta():
         
         return x
     
-    def _set_stdatt(self):
-        """ Set mean and median for the distribution
-        """
+    @cached_property
+    def mean(self):
+        """ Distribution mean, computed lazily on first access (the eager
+        version dominated FitCase preparation: a jitted pdf evaluated over a
+        1000-point loop recompiled per instance, for a value the pipeline
+        never reads). """
         x = jnp.linspace(self.ppf(1e-6), self.ppf(1-1e-6), 1000)
+        return jnp.trapezoid(x * jnp.array([self.pdf(_x) for _x in x]), x)
 
-        self.mean = jnp.trapezoid(x * jnp.array([self.pdf(_x) for _x in x]), x)
-
-        self.median = self.ppf(0.5)
+    @cached_property
+    def median(self):
+        """ Distribution median, computed lazily on first access. """
+        return self.ppf(0.5)
 
     @partial(jax.jit, static_argnums=(0,))
     def _transformx(self, x):
@@ -288,8 +291,6 @@ class distribution():
 
         self.cdf = cdf
 
-        self._set_stdatt()
-
     def rv(self):
         """ Draw random variable from distribution
 
@@ -305,14 +306,16 @@ class distribution():
         
         return x
     
-    def _set_stdatt(self):       
-        """ Set mean and median for the distribution
-        """
+    @cached_property
+    def mean(self):
+        """ Distribution mean, computed lazily on first access. """
         x = jnp.linspace(self.ppf(1e-6), self.ppf(1-1e-6), 1000)
+        return jnp.trapezoid(x * jnp.array([self.pdf(_x) for _x in x]), x)
 
-        self.mean = jnp.trapezoid(x * jnp.array([self.pdf(_x) for _x in x]), x)
-
-        self.median = self.ppf(0.5)
+    @cached_property
+    def median(self):
+        """ Distribution median, computed lazily on first access. """
+        return self.ppf(0.5)
 
 class uniform():
     def __init__(self, loc=0, scale=1):
@@ -340,10 +343,6 @@ class uniform():
 
         self.b = self.loc + self.scale
 
-        self.mean = 0.5 * (self.a + self.b)
-
-        self._set_stdatt()
-
     
     def rvs(self, size=None):
         """ Draw random variable from distribution
@@ -360,14 +359,19 @@ class uniform():
         
         return x
     
-    def _set_stdatt(self):
-        """ Set mean and median for the distribution
-        """
+    @cached_property
+    def mean(self):
+        """ Distribution mean, computed lazily on first access (the eager
+        version dominated FitCase preparation: a jitted pdf evaluated over a
+        1000-point loop recompiled per instance, for a value the pipeline
+        never reads). """
         x = jnp.linspace(self.ppf(1e-6), self.ppf(1-1e-6), 1000)
+        return jnp.trapezoid(x * jnp.array([self.pdf(_x) for _x in x]), x)
 
-        self.mean = jnp.trapezoid(x * jnp.array([self.pdf(_x) for _x in x]), x)
-
-        self.median = self.ppf(0.5)
+    @cached_property
+    def median(self):
+        """ Distribution median, computed lazily on first access. """
+        return self.ppf(0.5)
 
     @partial(jax.jit, static_argnums=(0,))
     def pdf(self, x):
@@ -475,8 +479,6 @@ class normal():
 
         self.lognorm = jnp.log(self.norm)
 
-        self._set_stdatt()
-
 
     def rvs(self, size=None):
         """ Draw random variable(s) from distribution
@@ -493,14 +495,19 @@ class normal():
         
         return x
     
-    def _set_stdatt(self):
-        """ Set mean and median for the distribution
-        """
+    @cached_property
+    def mean(self):
+        """ Distribution mean, computed lazily on first access (the eager
+        version dominated FitCase preparation: a jitted pdf evaluated over a
+        1000-point loop recompiled per instance, for a value the pipeline
+        never reads). """
         x = jnp.linspace(self.ppf(1e-6), self.ppf(1-1e-6), 1000)
+        return jnp.trapezoid(x * jnp.array([self.pdf(_x) for _x in x]), x)
 
-        self.mean = jnp.trapezoid(x * jnp.array([self.pdf(_x) for _x in x]), x)
-
-        self.median = self.ppf(0.5)
+    @cached_property
+    def median(self):
+        """ Distribution median, computed lazily on first access. """
+        return self.ppf(0.5)
     
     @partial(jax.jit, static_argnums=(0,))
     def pdf(self, x, norm=True):
@@ -587,8 +594,6 @@ class truncsine():
     def __init__(self,):
         """ Sine truncated between 0 and pi/2
         """
-
-        self._set_stdatt()
         
     def rv(self):
         """ Draw random variable from distribution
@@ -605,14 +610,19 @@ class truncsine():
         
         return x
 
-    def _set_stdatt(self):
-        """ Set mean and median for the distribution
-        """
+    @cached_property
+    def mean(self):
+        """ Distribution mean, computed lazily on first access (the eager
+        version dominated FitCase preparation: a jitted pdf evaluated over a
+        1000-point loop recompiled per instance, for a value the pipeline
+        never reads). """
         x = jnp.linspace(self.ppf(1e-6), self.ppf(1-1e-6), 1000)
+        return jnp.trapezoid(x * jnp.array([self.pdf(_x) for _x in x]), x)
 
-        self.mean = jnp.trapezoid(x * jnp.array([self.pdf(_x) for _x in x]), x)
-
-        self.median = self.ppf(0.5)
+    @cached_property
+    def median(self):
+        """ Distribution median, computed lazily on first access. """
+        return self.ppf(0.5)
  
     @partial(jax.jit, static_argnums=(0,))
     def pdf(self, x):
@@ -704,8 +714,6 @@ class randint():
 
         self.ints = jnp.arange(low, high, 1)
 
-        self._set_stdatt()
-
     def rv(self):
         """ Draw random variable from distribution
 
@@ -721,14 +729,19 @@ class randint():
         
         return x
 
-    def _set_stdatt(self):
-        """ Set mean and median for the distribution
-        """
+    @cached_property
+    def mean(self):
+        """ Distribution mean, computed lazily on first access (the eager
+        version dominated FitCase preparation: a jitted pdf evaluated over a
+        1000-point loop recompiled per instance, for a value the pipeline
+        never reads). """
         x = jnp.linspace(self.ppf(1e-6), self.ppf(1-1e-6), 1000)
+        return jnp.trapezoid(x * jnp.array([self.pdf(_x) for _x in x]), x)
 
-        self.mean = jnp.trapezoid(x * jnp.array([self.pdf(_x) for _x in x]), x)
-
-        self.median = self.ppf(0.5)
+    @cached_property
+    def median(self):
+        """ Distribution median, computed lazily on first access. """
+        return self.ppf(0.5)
 
     @partial(jax.jit, static_argnums=(0,))    
     def pdf(self, x):

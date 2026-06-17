@@ -82,13 +82,17 @@ def _transform_posterior_to_observables(post_df, teff, model, mission="Kepler",
 # Per-star data preparation  (replicates calib_data + prepare_data_for_stan)
 # ---------------------------------------------------------------------------
 def _find_posterior_file(results_dir, star_name, model):
-    """Glob for FitData_model_<model>.csv under results_dir/<star_name>/model_<model>_*/."""
-    pattern = os.path.join(
+    """Glob for FitData_model_<model>.csv[.gz] under results_dir/<star_name>/model_<model>_*/.
+
+    Prefers the gzip-compressed file written by the current pipeline and falls
+    back to a legacy uncompressed .csv; pd.read_csv reads either transparently.
+    """
+    base = os.path.join(
         results_dir, star_name,
         f"model_{model}_*",
         f"FitData_model_{model}.csv",
     )
-    matches = sorted(glob.glob(pattern))
+    matches = sorted(glob.glob(base + ".gz")) or sorted(glob.glob(base))
     return matches[0] if matches else None
 
 

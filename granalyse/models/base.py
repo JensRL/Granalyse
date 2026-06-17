@@ -123,10 +123,11 @@ class BackgroundModel:
         if self.plot_components is not None:
             return self.plot_components(ax, freq, eta, params, power_max)
         levels = []
-        for amp, cf, exp in amp_charfreq_exponent_triples(self, params):
+        for i, (amp, cf, exp) in enumerate(amp_charfreq_exponent_triples(self, params)):
             ax.plot(freq, harvey_component_profile(freq, amp, cf, exp, eta),
                     "g", linestyle="dashed", linewidth=1,
-                    label="Individual components", rasterized=True)
+                    label="Individual components" if i == 0 else None,
+                    rasterized=True)
             levels.append(amp**2 / cf)
         return levels
 

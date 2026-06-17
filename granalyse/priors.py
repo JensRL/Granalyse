@@ -54,7 +54,9 @@ def set_priors(fit, model=None):
     object; the rest (activity, oscillation, noise, numax) is estimated
     from the data as in the original framework.
 
-    Returns (priors OrderedDict keyed/ordered by fit.fitparams, prior_samples dict).
+    Returns the priors OrderedDict keyed/ordered by fit.fitparams. Prior
+    predictive samples are drawn separately (draw_prior_samples) so they are
+    generated lazily at plot time rather than stored on every FitCase.
     """
     if model is None:
         from .models import get_model
@@ -185,11 +187,19 @@ def set_priors(fit, model=None):
     # Combine and order according to fitparams
     all_priors = {**priors, **priors_general}
     priors = OrderedDict((key, all_priors[key]) for key in fit.fitparams)
+    return priors
 
-    # Prior predictive samples (linear scale)
-    samples = np.array([priors[key].rvs(size=15000) for key in fit.fitparams]).T
+
+def draw_prior_samples(fit, size=15000):
+    """Draw prior-predictive samples (linear scale) from fit.priors.
+
+    Split out of set_priors so the samples — used only for the prior corner
+    and prior-predictive PDS figures — are generated lazily at plot time
+    instead of being stored in every pickled FitCase. The draw is identical
+    to the original (same distributions, same size, global numpy RNG).
+    """
+    samples = np.array([fit.priors[key].rvs(size=size) for key in fit.fitparams]).T
     for key in fit.logPars:
         idx = fit.fitparams.index(key)
         samples[:, idx] = 10 ** samples[:, idx]
-    prior_samples = {key: samples[:, i] for i, key in enumerate(fit.fitparams)}
-    return priors, prior_samples
+    return {key: samples[:, i] for i, key in enumerate(fit.fitparams)}

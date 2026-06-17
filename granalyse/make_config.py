@@ -201,44 +201,24 @@ def _star_block(star: dict, missing: list[str], placeholder_comment: bool) -> st
 # Main generator
 # ---------------------------------------------------------------------------
 
-def generate_config(
-    *,
-    output: str = "config.yaml",
-    output_dir: str = "./results",
-    models: str = "H,J,T",
-    mission: str = "Kepler",
-    no_radius_inference: bool = False,
+def collect_star_records(
     stars_csv: str | None = None,
     pds_dir: str | None = None,
     pattern: str = "*.pow",
-) -> tuple[str, bool]:
-    """Generate a Granalyse YAML config scaffold.
+    mission: str = "Kepler",
+) -> list[dict]:
+    """Assemble star-record dicts from a CSV table and/or a PDS directory.
 
-    Parameters
-    ----------
-    output:               path to write the YAML file
-    output_dir:           output_dir value written into the YAML
-    models:               comma-separated model letters (e.g. 'H,J,T')
-    mission:              fallback mission when not in CSV
-    no_radius_inference:  if True, write radius_inference: false
-    stars_csv:            path to a CSV/TSV with star metadata
-    pds_dir:              directory to glob for PDS files
-    pattern:              glob pattern within pds_dir
+    Three modes (mirroring the make-config CLI):
+      CSV + pds_dir : join rows to files by extracted name (fills pds_file)
+      CSV only      : pds_file comes from the table
+      pds_dir only  : names from filenames, stellar params left null
 
-    Returns
-    -------
-    (output_path, all_complete) — all_complete is True when every star has
-    all required fields (and load_config was called successfully).
+    Each record is a dict with the keys consumed by load_config (name,
+    pds_file, numax, logg, teff, teff_err, feh, feh_err, mission, kind,
+    nyquist). Shared by `granalyse make-config` and config.load_config.
     """
-    radius_inference = not no_radius_inference
-
-    # -----------------------------------------------------------------------
-    # 1. Collect star records
-    # -----------------------------------------------------------------------
-
-    csv_rows: list[dict] = []
-    if stars_csv:
-        csv_rows = _read_csv(stars_csv)
+    csv_rows: list[dict] = _read_csv(stars_csv) if stars_csv else []
 
     pds_files: list[str] = []
     if pds_dir:
@@ -249,9 +229,7 @@ def generate_config(
         pds_files = globbed
 
     if not csv_rows and not pds_files:
-        raise ValueError(
-            "Provide at least one of --stars or --pds-dir."
-        )
+        raise ValueError("Provide at least one of stars_csv or pds_dir.")
 
     stars: list[dict] = []
 
@@ -311,6 +289,45 @@ def generate_config(
 
     if not stars:
         raise ValueError("No stars could be assembled from the provided inputs.")
+    return stars
+
+
+def generate_config(
+    *,
+    output: str = "config.yaml",
+    output_dir: str = "./results",
+    models: str = "H,J,T",
+    mission: str = "Kepler",
+    no_radius_inference: bool = False,
+    stars_csv: str | None = None,
+    pds_dir: str | None = None,
+    pattern: str = "*.pow",
+) -> tuple[str, bool]:
+    """Generate a Granalyse YAML config scaffold.
+
+    Parameters
+    ----------
+    output:               path to write the YAML file
+    output_dir:           output_dir value written into the YAML
+    models:               comma-separated model letters (e.g. 'H,J,T')
+    mission:              fallback mission when not in CSV
+    no_radius_inference:  if True, write radius_inference: false
+    stars_csv:            path to a CSV/TSV with star metadata
+    pds_dir:              directory to glob for PDS files
+    pattern:              glob pattern within pds_dir
+
+    Returns
+    -------
+    (output_path, all_complete) — all_complete is True when every star has
+    all required fields (and load_config was called successfully).
+    """
+    radius_inference = not no_radius_inference
+
+    # -----------------------------------------------------------------------
+    # 1. Collect star records
+    # -----------------------------------------------------------------------
+
+    stars = collect_star_records(stars_csv, pds_dir, pattern, mission)
 
     # -----------------------------------------------------------------------
     # 2. Completeness check
