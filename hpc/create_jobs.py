@@ -11,11 +11,17 @@ different partitions, memory, etc.
 
 What it does:
 
-  * Diagnoses which model fits already have results and lists only the work
-    that is still pending. Fully finished stars are dropped; partly finished
-    stars are listed with just their remaining models. Re-running the script
-    after a batch (or after an interrupted one) regenerates a job for exactly
-    the work that is left.
+  * Diagnoses which model fits already have results and prints a status
+    summary (stars/fits succeeded vs. missing), then lists only the work that
+    is still pending. Fully finished stars are dropped; partly finished stars
+    are listed with just their remaining models. Re-running the script after a
+    batch (or after an interrupted one) regenerates a job for exactly the work
+    that is left.
+  * On a re-run over a directory that already has results (the common case
+    after some fits hit the walltime), it reports the per-fit walltime the
+    previous job used and interactively prompts for a new, usually higher,
+    value before regenerating the job. ``--hours-per-fit`` is required for the
+    first run; on a re-run it pre-fills the prompt if given.
   * Packages the Granalyse source into ``granalyse_src.tar.gz`` so it can be
     shipped to node-local scratch. The fit then imports granalyse from the
     node, not by reading the package back from the shared filesystem on every
@@ -112,24 +118,140 @@ def _fmt_walltime(hours):
     return f"{d}-{h:02d}:{m:02d}:{s:02d}" if d else f"{h:02d}:{m:02d}:{s:02d}"
 
 
-def _pending_units(config, results_dir):
-    """Tab-separated 'name<TAB>models<TAB>pds' lines for stars with work left.
+def _scan(config, results_dir):
+    """Inspect existing results for every star/model in the config.
 
-    Diagnoses existing results: fully finished stars are dropped, partly
-    finished stars keep only their remaining models.
+    Returns ``(units, max_models, status)`` where:
+      * ``units``  -- tab-separated 'name<TAB>models<TAB>pds' lines for the stars
+        that still have work left (fully finished stars dropped; partly finished
+        stars keep only their remaining models).
+      * ``max_models`` -- largest number of pending models on any one star
+        (drives the per-task walltime).
+      * ``status`` -- list of ``(name, n_models, done_list, pending_list)`` for
+        every star, used to print the diagnostic summary.
     """
     from granalyse.config import load_config
     cfg = load_config(config)
     units = []
+    status = []
     for star in cfg.stars:
-        pending = [m for m in cfg.models
-                   if not _has_results(results_dir, star.name, f"model_{m}")]
-        if not pending:
+        done, pending = [], []
+        for m in cfg.models:
+            (done if _has_results(results_dir, star.name, f"model_{m}")
+             else pending).append(m)
+        status.append((star.name, len(cfg.models), done, pending))
+        if pending:
+            pds = os.path.abspath(star.pds_file)
+            units.append("\t".join((star.name, ",".join(pending), pds)))
+    max_models = max((len(s[3]) for s in status), default=0)
+    return units, max_models, status
+
+
+def _print_diagnostics(status, max_list=20):
+    """Print a succeeded/missing summary of existing results.
+
+    Returns ``(done_fits, pending_fits)`` so the caller can tell a fresh run
+    (no results yet) from a re-run over a directory that already has some.
+    """
+    n_stars = len(status)
+    total_fits = sum(s[1] for s in status)
+    done_fits = sum(len(s[2]) for s in status)
+    pending_fits = sum(len(s[3]) for s in status)
+    stars_complete = sum(1 for s in status if not s[3])
+    stars_partial = sum(1 for s in status if s[2] and s[3])
+    stars_untouched = sum(1 for s in status if not s[2])
+
+    print("Existing results status:")
+    print(f"  Stars : {n_stars} total -- {stars_complete} complete, "
+          f"{stars_partial} partial, {stars_untouched} not started")
+    print(f"  Fits  : {total_fits} total -- {done_fits} succeeded, "
+          f"{pending_fits} missing")
+
+    # Only worth listing per-star detail once some results exist (a re-run).
+    incomplete = [s for s in status if s[3]]
+    if done_fits and incomplete:
+        print("  Stars with work remaining:")
+        for name, n_models, done, pending in incomplete[:max_list]:
+            print(f"    {name}: {len(done)}/{n_models} done, "
+                  f"missing {','.join(pending)}")
+        if len(incomplete) > max_list:
+            print(f"    ... and {len(incomplete) - max_list} more")
+    return done_fits, pending_fits
+
+
+def _read_previous_job(job_file="dispatch_fits.job"):
+    """Parse a previously generated dispatch job for context on a re-run.
+
+    Returns ``(hours_per_fit, walltime_str)`` -- the per-fit hours baked into
+    the job by an earlier run (via the marker comment below) and its SLURM
+    ``--time`` directive. Either may be ``None`` if not found.
+    """
+    hours = wall = None
+    if os.path.exists(job_file):
+        with open(job_file) as f:
+            for line in f:
+                if "hours-per-fit=" in line:
+                    try:
+                        hours = float(line.split("hours-per-fit=")[1].split()[0])
+                    except (ValueError, IndexError):
+                        pass
+                elif line.startswith("#SBATCH --time="):
+                    wall = line.split("=", 1)[1].strip()
+    return hours, wall
+
+
+def _resolve_hours(cli_hours, prev_hours, prev_wall, has_results, parser):
+    """Decide the per-fit walltime (hours) for this job.
+
+    Fresh run: ``--hours-per-fit`` is required. Re-run over a directory with
+    existing results: report what the previous job used and prompt for a new,
+    usually higher, value (fits commonly fail because the walltime was too low).
+    """
+    if not has_results:
+        if cli_hours is None:
+            parser.error("--hours-per-fit is required for the first run "
+                         "(e.g. --hours-per-fit 3).")
+        return cli_hours
+
+    ref = cli_hours if cli_hours is not None else prev_hours
+    if prev_hours is not None:
+        print(f"\nPrevious job: {prev_hours:g} h per model fit "
+              f"({_fmt_walltime(prev_hours)}).")
+    elif prev_wall is not None:
+        # Older job written before the per-fit marker existed: only the pooled
+        # per-task --time was recorded, which is not directly the per-fit time.
+        print(f"\nPrevious job: per-task --time was {prev_wall} "
+              "(per-model-fit time not recorded).")
+    print("Fits commonly fail because the per-fit walltime was set too low; "
+          "consider raising it for the rerun.")
+
+    if not sys.stdin.isatty():
+        chosen = cli_hours if cli_hours is not None else prev_hours
+        if chosen is None:
+            parser.error("--hours-per-fit is required (stdin is not interactive "
+                         "and no previous job was found to reuse its value).")
+        print(f"(non-interactive: using {chosen:g} h per fit)")
+        return chosen
+
+    # The example illustrates that the input is decimal hours per model fit.
+    prompt = "Enter hours-per-fit for the rerun (decimal hours, e.g. 1.5 = 01:30:00)"
+    prompt += f" [{ref:g}]: " if ref is not None else ": "
+    while True:
+        resp = input(prompt).strip()
+        if not resp:
+            if ref is not None:
+                return ref
+            print("  Please enter a value (decimal hours).")
             continue
-        pds = os.path.abspath(star.pds_file)
-        units.append("\t".join((star.name, ",".join(pending), pds)))
-    max_models = max((len(u.split("\t")[1].split(",")) for u in units), default=0)
-    return units, max_models
+        try:
+            val = float(resp)
+        except ValueError:
+            print("  Enter a positive number of hours (e.g. 4 or 4.5).")
+            continue
+        if val <= 0:
+            print("  Enter a positive number of hours (e.g. 4 or 4.5).")
+            continue
+        return val
 
 
 def _detect_venv(repo_dir):
@@ -175,17 +297,29 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", required=True,
                         help="Granalyse YAML config")
-    parser.add_argument("--hours-per-fit", type=float, required=True,
+    parser.add_argument("--hours-per-fit", type=float, default=None,
                         help="Estimated walltime per single model fit, in hours "
-                             "(used to size the per-task --time)")
+                             "(used to size the per-task --time). Required on the "
+                             "first run; on a re-run it pre-fills the prompt.")
     args = parser.parse_args()
 
     repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    units, max_models = _pending_units(args.config, RESULTS_DIR)
+    units, max_models, status = _scan(args.config, RESULTS_DIR)
+    done_fits, pending_fits = _print_diagnostics(status)
     if not units:
-        print("Nothing to do: all fits already have results.")
+        print("\nNothing to do: all fits already have results.")
         sys.exit(0)
+
+    has_results = done_fits > 0
+    prev_hours, prev_wall = _read_previous_job()
+    hours_per_fit = _resolve_hours(args.hours_per_fit, prev_hours, prev_wall,
+                                   has_results, parser)
+
+    n_units = len(units)
+    verb = "Recreating" if has_results else "Writing"
+    print(f"\n{verb} star_list.txt for {n_units} star(s) with work remaining "
+          f"({pending_fits} model fit(s) to run).")
 
     list_file = os.path.abspath("star_list.txt")
     with open(list_file, "w") as f:
@@ -194,13 +328,12 @@ def main():
     _build_source_tarball(repo_dir, "granalyse_src.tar.gz")
 
     # Pool stars into tasks so the array stays within MAX_ARRAY.
-    n_units = len(units)
     units_per_task = max(1, math.ceil(n_units / MAX_ARRAY))
     n_tasks = math.ceil(n_units / units_per_task)
     limit = min(n_tasks, MAX_PARALLEL)
 
     # Per-task walltime: hours_per_fit x (models per star) x (stars per task).
-    walltime = _fmt_walltime(args.hours_per_fit * max_models * units_per_task)
+    walltime = _fmt_walltime(hours_per_fit * max_models * units_per_task)
 
     venv = _detect_venv(repo_dir)
     config_abs = os.path.abspath(args.config)
@@ -215,6 +348,7 @@ def main():
                                       units_per_task=units_per_task)
 
     job = f"""#!/bin/bash
+# Generated by create_jobs.py -- hours-per-fit={hours_per_fit:g} (per single model fit)
 
 #SBATCH --job-name={JOB_NAME}
 #SBATCH --output=Outputs/%x_%A_%a.out

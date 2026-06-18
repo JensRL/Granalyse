@@ -32,7 +32,8 @@ def remap_paths(fit, results_dir):
 def _run_config(args):
     """Prep on the node and run every requested model for one star."""
     from granalyse.config import load_config
-    from granalyse.pipeline import prepare_star_data, prepare_fit_case, run_single_fit
+    from granalyse.pipeline import (prepare_star_data, prepare_fit_case,
+                                     run_single_fit, tee_stdout)
 
     cfg = load_config(args.config)
     stars = {s.name: s for s in cfg.stars}
@@ -46,14 +47,22 @@ def _run_config(args):
     if not models:
         raise SystemExit("--model is required (e.g. 'H' or 'H,J,T')")
 
-    # Read and bin the spectrum once, reuse it across this star's models.
-    star_data = prepare_star_data(star, cfg)
-    for model_name in models:
-        fit = prepare_fit_case(star, model_name, cfg, star_data=star_data)
-        fit = remap_paths(fit, args.results_dir)
-        print(f"Running fit: star {fit.name}, model {fit.model}")
-        run_single_fit(fit, skip_replot=cfg.skip_replot)
-        print(f"Done: results in {fit.respath}")
+    # Mirror this run's terminal output to <results-dir>/<star>/run.log so it is
+    # rsynced back alongside the fit results (matching the local pipeline, which
+    # writes a run.log per star). run_node.sh calls this script once per model,
+    # so the log is appended to and accumulates the star's models.
+    safe_name = os.path.basename(os.path.normpath(star.name))
+    log_path = os.path.join(args.results_dir, safe_name, "run.log")
+
+    with tee_stdout(log_path, mode="a"):
+        # Read and bin the spectrum once, reuse it across this star's models.
+        star_data = prepare_star_data(star, cfg)
+        for model_name in models:
+            fit = prepare_fit_case(star, model_name, cfg, star_data=star_data)
+            fit = remap_paths(fit, args.results_dir)
+            print(f"Running fit: star {fit.name}, model {fit.model}")
+            run_single_fit(fit, skip_replot=cfg.skip_replot)
+            print(f"Done: results in {fit.respath}")
 
 
 def main():

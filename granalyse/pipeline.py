@@ -36,6 +36,18 @@ class _Tee:
         self._log.flush()
 
 
+@contextlib.contextmanager
+def tee_stdout(log_path, mode="w"):
+    """Mirror everything printed to stdout into ``log_path`` (a run log) for the
+    duration of the block, while still writing to the real stdout. The parent
+    directory is created if needed. ``mode="a"`` appends (used by the HPC runner,
+    which is invoked once per model and accumulates one log per star)."""
+    os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
+    with open(log_path, mode) as logfile, \
+            contextlib.redirect_stdout(_Tee(sys.stdout, logfile)):
+        yield
+
+
 def _result_dirname(model_name, cfg):
     """Original result-directory naming: model_X_binned_gaussian_correlatedinf etc."""
     parts = [f"model_{model_name}",
@@ -235,10 +247,7 @@ def run_star(star, cfg):
     Returns a summary dict (also written to the star's output directory).
     Terminal output is mirrored to <star_dir>/run.log."""
     star_dir = os.path.join(cfg.output_dir, star.name)
-    os.makedirs(star_dir, exist_ok=True)
-
-    with open(os.path.join(star_dir, "run.log"), "w") as logfile, \
-            contextlib.redirect_stdout(_Tee(sys.stdout, logfile)):
+    with tee_stdout(os.path.join(star_dir, "run.log")):
         return _run_star_logged(star, cfg, star_dir)
 
 
