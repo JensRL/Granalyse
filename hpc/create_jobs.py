@@ -1,43 +1,20 @@
-"""Stage 1 (HPC workflow): generate a SLURM array job for the fit cases.
-
+"""
 Usage:
 
     python hpc/create_jobs.py --config config.yaml --hours-per-fit 3
 
-Each star is one work unit; all of its (still pending) models run in one node
-process. Everything else is handled with sensible defaults -- edit the
-constants below or the generated ``dispatch_fits.job`` if your cluster needs
-different partitions, memory, etc.
+Cluster defaults (partition, memory, etc.) are the constants below
+for the generated ``dispatch_fits.job``.
 
-What it does:
-
-  * Diagnoses which model fits already have results and prints a status
-    summary (stars/fits succeeded vs. missing), then lists only the work that
-    is still pending. Fully finished stars are dropped; partly finished stars
-    are listed with just their remaining models. Re-running the script after a
-    batch (or after an interrupted one) regenerates a job for exactly the work
-    that is left.
-  * On a re-run over a directory that already has results (the common case
-    after some fits hit the walltime), it reports the per-fit walltime the
-    previous job used and interactively prompts for a new, usually higher,
-    value before regenerating the job. ``--hours-per-fit`` is required for the
-    first run; on a re-run it pre-fills the prompt if given.
-  * Packages the Granalyse source into ``granalyse_src.tar.gz`` so it can be
-    shipped to node-local scratch. The fit then imports granalyse from the
-    node, not by reading the package back from the shared filesystem on every
-    call. The heavy parts of the repo (examples, docs, the venv) stay behind.
-  * Bakes in activation of the venv this script is run from (the ``.gvenv`` in
-    the Granalyse checkout), so no alias setup is required on the cluster.
+Already-finished fits are detected and skipped: finished stars are dropped and
+partly-finished stars keep only their missing models, so re-running regenerates
+a job for exactly the work left.
 
 Writes four files in the current directory:
     star_list.txt          one star per line: name <tab> models <tab> pds path
     granalyse_src.tar.gz   the granalyse package + runner, staged to scratch
     run_node.sh            executable: stage to scratch -> fit -> rsync back
     dispatch_fits.job      sbatch script: SLURM directives + per-task dispatch
-
-The fit runs entirely on node-local scratch; results are rsynced back after
-every individual model so an interrupted task keeps everything it finished.
-Scratch is purged automatically when the job ends.
 """
 
 import argparse
@@ -51,22 +28,15 @@ import tarfile
 # ---- cluster defaults (edit here, or tweak the generated dispatch_fits.job) -
 RESULTS_DIR = "Results"
 JOB_NAME = "granalyse_fits"
-PARTITION = "q24,q26,q36,q40"        # comma-separated SLURM partition(s)
+PARTITION = "q24,q28,q36,q40"        # comma-separated SLURM partition(s)
 MAX_ARRAY = 10000           # cap on array size; stars are pooled per task to fit
 MAX_PARALLEL = 256          # max simultaneously running array tasks
 CPUS = 1                    # one fit runs on a single core
 MEM_PER_CPU = "8G"
 
 
-# ---- run_node.sh template (node-local staging) ----------------------------
-# {config}/{results_dir} are filled by str.format; ${{...}} survives as a
-# literal ${...} shell variable. The granalyse source and the runner are taken
-# from the node-local copy via $GRAN_RUNNER (exported by dispatch_fits.job).
+# ---- run_node.sh template  ----------------------------
 _NODE_SH = """#!/bin/bash
-# Stage one star's PDS to node-local scratch, fit each requested model there,
-# and rsync the results back after every model -- so an interrupted task keeps
-# every model it has already finished. Scratch is purged when the job ends.
-#   usage: run_node.sh <starname> <models_csv> <pds_path>
 set -eo pipefail
 
 starname="$1"
@@ -91,7 +61,6 @@ done
 
 # ---- per-task dispatch block (inside dispatch_fits.job) --------------------
 # Each array task processes a slice of {units_per_task} consecutive list lines.
-# Fields are tab-separated: star name, comma-separated models, PDS path.
 _DISPATCH = """units_per_task={units_per_task}
 start=$(( (SLURM_ARRAY_TASK_ID - 1) * units_per_task + 1 ))
 end=$(( SLURM_ARRAY_TASK_ID * units_per_task ))
@@ -123,8 +92,7 @@ def _scan(config, results_dir):
 
     Returns ``(units, max_models, status)`` where:
       * ``units``  -- tab-separated 'name<TAB>models<TAB>pds' lines for the stars
-        that still have work left (fully finished stars dropped; partly finished
-        stars keep only their remaining models).
+        that still have work left.
       * ``max_models`` -- largest number of pending models on any one star
         (drives the per-task walltime).
       * ``status`` -- list of ``(name, n_models, done_list, pending_list)`` for
@@ -184,7 +152,7 @@ def _read_previous_job(job_file="dispatch_fits.job"):
 
     Returns ``(hours_per_fit, walltime_str)`` -- the per-fit hours baked into
     the job by an earlier run (via the marker comment below) and its SLURM
-    ``--time`` directive. Either may be ``None`` if not found.
+    ``--time``. Either may be ``None`` if not found.
     """
     hours = wall = None
     if os.path.exists(job_file):
@@ -205,7 +173,7 @@ def _resolve_hours(cli_hours, prev_hours, prev_wall, has_results, parser):
 
     Fresh run: ``--hours-per-fit`` is required. Re-run over a directory with
     existing results: report what the previous job used and prompt for a new,
-    usually higher, value (fits commonly fail because the walltime was too low).
+    usually higher, value.
     """
     if not has_results:
         if cli_hours is None:
@@ -274,10 +242,8 @@ def _detect_venv(repo_dir):
 
 
 def _build_source_tarball(repo_dir, dest):
-    """Package the granalyse source + runner for staging to node scratch.
-
-    Only the importable source is shipped (the package and the runner); the
-    examples, docs, calibration data and the venv are deliberately left behind.
+    """
+    Package the granalyse source + runner for staging to node scratch.
     """
     def _no_cache(ti):
         parts = ti.name.split("/")
@@ -348,8 +314,6 @@ def main():
                                       units_per_task=units_per_task)
 
     job = f"""#!/bin/bash
-# Generated by create_jobs.py -- hours-per-fit={hours_per_fit:g} (per single model fit)
-
 #SBATCH --job-name={JOB_NAME}
 #SBATCH --output=Outputs/%x_%A_%a.out
 #SBATCH --time={walltime}
@@ -365,8 +329,7 @@ export OMP_NUM_THREADS={CPUS}
 source "{venv}"
 cd "$SLURM_SUBMIT_DIR"
 
-# Ship the granalyse source to node-local scratch and import it from there, so
-# the fit never reads the package back from the shared filesystem.
+# Ship the granalyse source to scratch
 src_scratch="/scratch/$SLURM_JOB_ID/$SLURM_ARRAY_TASK_ID/granalyse_src"
 mkdir -p "$src_scratch"
 tar -xzf "$SLURM_SUBMIT_DIR/granalyse_src.tar.gz" -C "$src_scratch"

@@ -1,7 +1,8 @@
-"""Config-file generator: `granalyse make-config`.
+"""
+Config-file generator: `granalyse make-config`.
 
-Builds a human-readable YAML scaffold from a CSV/TSV star table, a directory
-of PDS files, or both.  The emitted file is valid input for load_config when
+Builds a human-readable YAML scaffold from a CSV/TSV star table and a directory
+of PDS files  The emitted file is valid input for load_config when
 all required fields are present; otherwise it includes explicit null
 placeholders so the user knows exactly what to fill in.
 """
@@ -14,7 +15,7 @@ import sys
 from typing import Any
 
 # ---------------------------------------------------------------------------
-# Name extraction (port of original framework's extract_kic_name)
+# Name extraction
 # ---------------------------------------------------------------------------
 
 def _extract_name(filename: str) -> str:

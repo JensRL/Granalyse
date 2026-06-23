@@ -1,9 +1,8 @@
 """BackgroundModel: everything one granulation background model needs to plug
 into the pipeline.
 
-This replaces the model-letter if-statements that were spread across the
-original NSGF framework (parameter lists, initial guesses, prior blocks,
-likelihood closures, normalisation, ordering constraints). A new model is
+One instance bundles a model's parameter list, initial guesses, prior blocks,
+likelihood functions, normalisation, and ordering constraint. A new model is
 added by creating one BackgroundModel instance and registering it.
 """
 
@@ -13,7 +12,7 @@ import numpy as np
 
 
 # Common (non-model-specific) fit parameters appended after the granulation
-# parameters, in the order used by the original framework.
+# parameters, in canonical order.
 COMMON_PARAMS = ["W", "Posc", "sigma", "a2", "b2"]
 COMMON_LABELS = {
     "W": r"$W$ [ppm$^2/\mu$Hz]",
@@ -40,7 +39,7 @@ def xi_analytic(exponent):
 
 def xi_clipped(exponent):
     """xi_analytic with the exponent clipped to [1.1, 20], for vectorised use
-    on posterior samples (as in the radius-relation framework)."""
+    on posterior samples."""
     return xi_analytic(np.clip(exponent, 1.1, 20.0))
 
 
@@ -80,31 +79,26 @@ class BackgroundModel:
     aliases: tuple                  # descriptive names, e.g. ('harvey2',)
     description: str
 
-    params: tuple                   # granulation parameters, canonical order
+    params: tuple                   # granulation parameters
     log_params: frozenset           # subset fitted in log10 space
-    labels: dict                    # LaTeX labels for the granulation parameters
+    labels: dict                    # LaTeX labels 
 
     func_real: Callable             # jax model incl. oscillation envelope
     func_back: Callable             # jax model, background only
 
-    # (k, e) per parameter for mu = 10**(k + e*log10(numax)), Kallinger 2014
-    kallinger_coeffs: dict
+    kallinger_coeffs: dict          #Prior coefficients from Kallinger et al. 2014
 
-    inits: Callable                 # numax -> dict of initial guesses
-    specific_priors: Callable       # fit -> dict of model-specific priors
-    ordering_constraint: Callable   # jax (**params) -> 0.0 or -inf
-    norm_factors: Callable          # fit -> {amp param: xi}
-    amp_components: tuple           # amplitude params entering the normalised area
+    inits: Callable                 # dict of initial guesses
+    specific_priors: Callable       # dict of model-specific priors
+    ordering_constraint: Callable   
+    norm_factors: Callable          
+    amp_components: tuple           
     corr_computed: tuple            # of 'a','b','d': computed from scaling in corr mode
 
-    has_radius_relation: bool = True
-    # (posterior_df, corr_inference=None) -> (charb, A_gran) per-sample arrays,
-    # A_gran before the bolometric correction; None if the model has no
-    # granulation-radius relation.
+    has_radius_relation: bool = True #None if the model has no granulation-radius relation.
+
     transform_observables: Callable | None = None
-    # (ax, freq, eta, params, power_max) -> list of component floor levels;
-    # draws the model's granulation components on a PDS axis. None uses the
-    # generic per-component Harvey profiles.
+
     plot_components: Callable | None = None
 
     @property
@@ -133,7 +127,7 @@ class BackgroundModel:
 
     def prior_centers(self, numax):
         """Model-neutral linear-scale centers for a, b, c, d from the
-        Kallinger 2014 scaling laws (original common_centers_from_numax)."""
+        Kallinger 2014 scaling laws."""
         return {
             p: 10 ** (k + np.log10(numax) * e)
             for p, (k, e) in self.kallinger_coeffs.items()
@@ -142,8 +136,6 @@ class BackgroundModel:
     def configure_fit_parameters(self, fit):
         """Set fit.fitparams, fit.logPars, fit.paramlabels on a FitCase,
         applying the pulsation-model and correlated-inference adjustments.
-
-        Reproduces the parameter-assembly logic of the original main scripts.
         """
         fitparams = list(self.params) + list(COMMON_PARAMS)
         logPars = set(self.log_params)

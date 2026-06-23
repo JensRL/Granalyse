@@ -1,8 +1,10 @@
 """
-The distributions module contains a selection of probability densities and methods, 
-which are primarily used to build prior probability densities in PBjam. These classes
-to some extent mimic those of the scipy.stats package in terms of their inputs and 
+Probability densities used to build the prior distributions.
+
+These classes loosely mimic the scipy.stats API in their inputs and
 functionality.
+
+Original source of distribution setup: PBJam (https://github.com/PBjam-projects/PBjam)
 """
 
 import jax.numpy as jnp
@@ -29,18 +31,12 @@ class beta():
         scale : float
             The width of the beta distribution. Effectively sets the upper
             bound for the distribution, which is loc+scale.
-        eps : float, optional
-            Small fudge factor to avoid dividing by 0 etc.
         """
 
         # Turn init args into attributes
         self.__dict__.update((k, v) for k, v in locals().items() if k not in ['self'])
 
-#        self.fac = jnp.exp(jsp.gammaln(self.a + self.b)) / (jnp.exp(jsp.gammaln(self.a)) * jnp.exp(jsp.gammaln(self.b))) / self.scale
-
-#        self.logfac = jnp.log(self.fac)
-
-        self.logfac = jsp.gammaln(self.a + self.b) - jsp.gammaln(self.a) - jsp.gammaln(self.b) - jnp.log(self.scale) 
+        self.logfac = jsp.gammaln(self.a + self.b) - jsp.gammaln(self.a) - jsp.gammaln(self.b) - jnp.log(self.scale)
 
         self.fac = jnp.exp(self.logfac)
 
@@ -65,10 +61,7 @@ class beta():
     
     @cached_property
     def mean(self):
-        """ Distribution mean, computed lazily on first access (the eager
-        version dominated FitCase preparation: a jitted pdf evaluated over a
-        1000-point loop recompiled per instance, for a value the pipeline
-        never reads). """
+        """ Distribution mean, computed lazily on first access. """
         x = jnp.linspace(self.ppf(1e-6), self.ppf(1-1e-6), 1000)
         return jnp.trapezoid(x * jnp.array([self.pdf(_x) for _x in x]), x)
 
@@ -118,9 +111,7 @@ class beta():
 
         Returns the beta distribution at x. The distribution is normalized to
         unit integral by default so that it may be used as a PDF.
-        In some cases the normalization is not necessary, and since it's
-        marginally slower it may as well be left out.
-        
+
         Parameters
         ----------
         x : array
@@ -154,8 +145,7 @@ class beta():
         Returns the log of the beta distribution at x. The distribution is
         normalized to unit integral (in linear units) by default so that it
         may be used as a PDF.
-        In some cases the normalization is not necessary, and since it's
-        marginally slower it may as well be left out.
+
         Parameters
         ----------
         x : array
@@ -361,10 +351,7 @@ class uniform():
     
     @cached_property
     def mean(self):
-        """ Distribution mean, computed lazily on first access (the eager
-        version dominated FitCase preparation: a jitted pdf evaluated over a
-        1000-point loop recompiled per instance, for a value the pipeline
-        never reads). """
+        """ Distribution mean, computed lazily on first access. """
         x = jnp.linspace(self.ppf(1e-6), self.ppf(1-1e-6), 1000)
         return jnp.trapezoid(x * jnp.array([self.pdf(_x) for _x in x]), x)
 
@@ -497,10 +484,7 @@ class normal():
     
     @cached_property
     def mean(self):
-        """ Distribution mean, computed lazily on first access (the eager
-        version dominated FitCase preparation: a jitted pdf evaluated over a
-        1000-point loop recompiled per instance, for a value the pipeline
-        never reads). """
+        """ Distribution mean, computed lazily on first access. """
         x = jnp.linspace(self.ppf(1e-6), self.ppf(1-1e-6), 1000)
         return jnp.trapezoid(x * jnp.array([self.pdf(_x) for _x in x]), x)
 
@@ -515,9 +499,6 @@ class normal():
 
         Returns the normal distribution at x. The distribution is normalized to
         unit integral by default so that it may be used as a PDF.
-
-        In some cases the normalization is not necessary, and since it's
-        marginally slower it may as well be left out.
 
         Parameters
         ----------
@@ -549,9 +530,6 @@ class normal():
         Returns the log of the normal distribution at x. The distribution is
         normalized to unit integral (in linear units) by default so that it
         may be used as a PDF.
-
-        In some cases the normalization is not necessary, and since it's
-        marginally slower it may as well be left out.
 
         Parameters
         ----------
@@ -612,10 +590,7 @@ class truncsine():
 
     @cached_property
     def mean(self):
-        """ Distribution mean, computed lazily on first access (the eager
-        version dominated FitCase preparation: a jitted pdf evaluated over a
-        1000-point loop recompiled per instance, for a value the pipeline
-        never reads). """
+        """ Distribution mean, computed lazily on first access. """
         x = jnp.linspace(self.ppf(1e-6), self.ppf(1-1e-6), 1000)
         return jnp.trapezoid(x * jnp.array([self.pdf(_x) for _x in x]), x)
 
@@ -731,10 +706,7 @@ class randint():
 
     @cached_property
     def mean(self):
-        """ Distribution mean, computed lazily on first access (the eager
-        version dominated FitCase preparation: a jitted pdf evaluated over a
-        1000-point loop recompiled per instance, for a value the pipeline
-        never reads). """
+        """ Distribution mean, computed lazily on first access. """
         x = jnp.linspace(self.ppf(1e-6), self.ppf(1-1e-6), 1000)
         return jnp.trapezoid(x * jnp.array([self.pdf(_x) for _x in x]), x)
 
@@ -745,18 +717,7 @@ class randint():
 
     @partial(jax.jit, static_argnums=(0,))    
     def pdf(self, x):
-        """_summary_
-
-        Parameters
-        ----------
-        x : _type_
-            _description_
-
-        Returns
-        -------
-        _type_
-            _description_
-        """
+        """ Probability mass at x (1/diff on the integer support, else 0). """
         T = jnp.sum(self.ints == x).astype(bool)
         
         y = jax.lax.cond(T, lambda : 1/self.diff, lambda : 0.)

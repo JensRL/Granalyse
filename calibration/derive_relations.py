@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """derive_relations.py
 ======================
-Re-derive granulation-radius scaling-relation coefficients from a user
-sample of stars with known radii.
+Re-derive granulation-radius scaling-relation coefficients from  a sample of stars with known radii.
 
 Usage
 -----
@@ -52,7 +51,7 @@ import numpy as np
 import pandas as pd
 
 # ---------------------------------------------------------------------------
-# Bolometric-correction parameters per mission (matching granalyse/apply.py)
+# Bolometric-correction parameters per mission (keep in sync with granalyse/radius/apply.py)
 # ---------------------------------------------------------------------------
 _BOLOMETRIC = {
     "Kepler": (5934.0, 0.80),
@@ -79,13 +78,11 @@ def _transform_posterior_to_observables(post_df, teff, model, mission="Kepler",
 
 
 # ---------------------------------------------------------------------------
-# Per-star data preparation  (replicates calib_data + prepare_data_for_stan)
+# Per-star data preparation
 # ---------------------------------------------------------------------------
 def _find_posterior_file(results_dir, star_name, model):
-    """Glob for FitData_model_<model>.csv[.gz] under results_dir/<star_name>/model_<model>_*/.
-
-    Prefers the gzip-compressed file written by the current pipeline and falls
-    back to a legacy uncompressed .csv; pd.read_csv reads either transparently.
+    """
+    Glob for FitData_model_<model>.csv[.gz] under results_dir/<star_name>/model_<model>_*/.
     """
     base = os.path.join(
         results_dir, star_name,
@@ -97,14 +94,8 @@ def _find_posterior_file(results_dir, star_name, model):
 
 
 def _compute_per_star_stats(charb_s, agran_s):
-    """Compute log10 medians and 2x2 covariance from posterior samples.
-
-    Replicates the approach in application_helpers.calib_data (lines 306-307):
-        lg_c = np.log10(charb_s); lg_a = np.log10(agran_s)
-        cov_m = np.cov(np.vstack([lg_a, lg_c]))
-
-    Row/column order in cov_m is [lg_amp, lg_charb] (amp first, charb second),
-    matching the Stan data layout lg_amp_obs / lg_charb_obs.
+    """
+    Compute log10 medians and 2x2 covariance from posterior samples.
 
     Returns
     -------
@@ -114,16 +105,16 @@ def _compute_per_star_stats(charb_s, agran_s):
     """
     lg_a = np.log10(agran_s)
     lg_c = np.log10(charb_s)
-    # np.cov stacks as [lg_a, lg_c] -> row 0 = lg_amp, row 1 = lg_charb
     cov_m = np.cov(np.vstack([lg_a, lg_c]))
     return float(np.median(lg_a)), float(np.median(lg_c)), cov_m
 
 
 # ---------------------------------------------------------------------------
-# Stan data assembly  (replicates prepare_data_for_stan)
+# Stan data assembly
 # ---------------------------------------------------------------------------
 def build_stan_data(sample_df, results_dir, model, mission, perky):
-    """Load posteriors, transform, normalise to Perky, and assemble Stan dict.
+    """
+    Load posteriors, transform, normalise to Perky, and assemble Stan dict.
 
     Parameters
     ----------
@@ -175,13 +166,6 @@ def build_stan_data(sample_df, results_dir, model, mission, perky):
         lg_amp_mean, lg_charb_mean, cov_m = _compute_per_star_stats(charb_s, agran_s)
 
         # ── Normalise to relative space ──────────────────────────────────────
-        # Matches pystan_helpers.prepare_data_for_stan lines 313-325:
-        #   R [R_sun] -> [cm] -> divide by perky_R_cm
-        #   Teff divide by perky_teff
-        #   amp_tot divide by perky_amp   (already carried via lg_amp_mean)
-        #   charb divide by perky_charb   (already carried via lg_charb_mean)
-        #   FeH subtract perky_feh
-
         R_cm   = float(row["radius"])    * R_SUN_CM
         R_cm_e = float(row["radius_err"]) * R_SUN_CM
 
@@ -192,15 +176,8 @@ def build_stan_data(sample_df, results_dir, model, mission, perky):
         teff_err_rel = float(row["teff_err"]) / perky_teff
 
         # log-space observables (relative) for gran amplitude and charb
-        # The per-star posterior median is already in absolute units [ppm, muHz];
-        # dividing before log10 is equivalent to subtracting log10(perky_*):
-        #   lg_amp_rel = log10(amp/perky_amp) = lg_amp_mean - log10(perky_amp)
         lg_amp_rel   = lg_amp_mean   - np.log10(perky_amp)
         lg_charb_rel = lg_charb_mean - np.log10(perky_charb)
-
-        # The 2x2 covariance is in absolute log10 space; dividing by a constant
-        # shifts the mean but does NOT change the variance (log10(x/k) = log10(x) - log10(k)).
-        # So cov_m is already the correct covariance in relative log space.
 
         lg_R_rel     = np.log10(R_rel)
         lg_R_rel_err = R_rel_err / (R_rel * np.log(10))
@@ -305,7 +282,7 @@ def validate_stan_data(stan_data):
 # Initial values
 # ---------------------------------------------------------------------------
 def _get_initial_values(df_rel):
-    """Deterministic starting point matching pystan_helpers.get_initial_values."""
+    """Deterministic starting point for the sampler."""
     return {
         "lg_teff_true": df_rel["lg_teff_obs"].values.tolist(),
         "lg_R_true":    df_rel["lg_R_obs"].values.tolist(),
@@ -329,7 +306,7 @@ def run_stan(stan_data, df_rel, output_dir, model,
              adapt_delta=0.95, max_treedepth=12):
     """Compile and sample the Stan model; return (fit_data, az_data).
 
-    Follows pystan_helpers.run_stan_fit exactly:
+    Sampling setup:
       - iter_warmup  = iterations // 3
       - iter_sampling = 2 * iterations // 3
       - per-chain init with 5% random jitter on scalar coefficients (rng seed 42)

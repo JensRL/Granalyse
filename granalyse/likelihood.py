@@ -1,9 +1,7 @@
 """Likelihood construction for the nested-sampling fits.
 
 make_loglike composes the log-likelihood from the model object and the fit
-flags (Gaussian vs Peakbogging envelope, correlated vs free granulation
-parameters), replacing the per-model unrolled closures of the original
-framework. Numerical behaviour is identical.
+flags (Gaussian envelope vs Peakbogging, correlated vs free granulation parameters).
 """
 
 import jax
@@ -83,11 +81,8 @@ def mixed_mod_likelihood(P, dof, mod, sigmoid, chi2_sigmoid):
 
 # ------------------------------- loglike factory -------------------------------
 def make_loglike(fit, model=None):
-    """Build the jitted log-likelihood for one FitCase.
-
-    The composition is: model function x envelope treatment (Gaussian chi2 or
-    Peakbogging mixture) x parameter treatment (free, or computed from the
-    Kallinger scaling relations with sampled scatter in correlated mode).
+    """
+    Build the jitted log-likelihood for one FitCase.
     """
     if model is None:
         model = get_model(fit.model)

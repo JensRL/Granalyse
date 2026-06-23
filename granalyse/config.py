@@ -11,15 +11,13 @@ from .star import Star
 VALID_PULSMODS = ("Gaussian", "Peakbogging")
 VALID_MISSIONS = ("Kepler", "TESS")
 
-# Prefer the libyaml-backed safe loader: ~5x faster on large inline-star configs
-# (each HPC node task parses the whole config to pick out its one star).
 _YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 
 
 @dataclass
 class RunConfig:
     stars: list
-    models: list                     # canonical model letters
+    models: list                    
     output_dir: str = "./results"
     pulsation_model: str = "Gaussian"
     correlated_inference: bool = True
@@ -30,8 +28,8 @@ class RunConfig:
     nlive_factor: float | None = None
     seed: int | None = None
     radius_inference: bool = True
-    skip_replot: bool = False  # on resume, reuse existing figures instead of remaking
-    star_kinds: dict = field(default_factory=dict)  # name -> 'star'|'simulation'
+    skip_replot: bool = False  
+    star_kinds: dict = field(default_factory=dict) 
 
 
 def load_config(path):
@@ -44,9 +42,6 @@ def load_config(path):
     if "models" not in raw or not raw["models"]:
         raise ValueError("Config must list at least one background model under 'models'.")
 
-    # Stars come from an inline 'stars' list or a 'stars_csv' table (+ optional
-    # 'pds_dir' to match PDS files by name). stars_csv/pds_dir are resolved
-    # relative to the config file so the run is portable across machines.
     config_dir = os.path.dirname(os.path.abspath(path))
     if raw.get("stars_csv"):
         if raw.get("stars"):
@@ -68,7 +63,7 @@ def load_config(path):
     else:
         raise ValueError("Config must list stars inline under 'stars' or via 'stars_csv'.")
 
-    models = [get_model(m).name for m in raw["models"]]  # validates + canonicalises
+    models = [get_model(m).name for m in raw["models"]]  
 
     pulsmod = raw.get("pulsation_model", "Gaussian")
     if pulsmod not in VALID_PULSMODS:
@@ -107,7 +102,7 @@ def load_config(path):
             feh_err=entry.get("feh_err"),
             mission=mission,
             nyquist=entry.get("nyquist"),
-        )  # Star.__post_init__ enforces numax or (logg, teff)
+        )  
         stars.append(star)
 
     cfg = RunConfig(

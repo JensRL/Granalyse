@@ -52,7 +52,7 @@ def set_priors(fit, model=None):
     """Assemble the full prior dictionary for one FitCase and draw prior
     predictive samples. Model-specific priors are delegated to the model
     object; the rest (activity, oscillation, noise, numax) is estimated
-    from the data as in the original framework.
+    from the data.
 
     Returns the priors OrderedDict keyed/ordered by fit.fitparams. Prior
     predictive samples are drawn separately (draw_prior_samples) so they are
@@ -195,8 +195,8 @@ def draw_prior_samples(fit, size=15000):
 
     Split out of set_priors so the samples — used only for the prior corner
     and prior-predictive PDS figures — are generated lazily at plot time
-    instead of being stored in every pickled FitCase. The draw is identical
-    to the original (same distributions, same size, global numpy RNG).
+    instead of being stored in every pickled FitCase. Uses the global numpy
+    RNG.
     """
     samples = np.array([fit.priors[key].rvs(size=size) for key in fit.fitparams]).T
     for key in fit.logPars:

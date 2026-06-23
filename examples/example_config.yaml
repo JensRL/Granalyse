@@ -6,6 +6,7 @@ output_dir: ./examples/example_results
 
 # Background models to fit: D/J/H/T or aliases harvey1/hybrid/harvey2/harvey3.
 # Radius inference uses the models with derived relations (J, H, T).
+# Recommended default: J, H and T
 models: [J, H, T]
 
 pulsation_model: Gaussian      # Gaussian (default) or Peakbogging
@@ -20,7 +21,7 @@ low_frequency_cut: 10          # discard frequencies below this [muHz]; null to 
 
 sampling:
   nlive_factor: null           # multiply default nlive (4*50*ndims); null = default
-  seed: null                   # RNG seed for reproducible sampling
+  seed: null                   # RNG seed for reproducible sampling 
 
 radius_inference: true         # requires teff (and ideally feh) per star
 

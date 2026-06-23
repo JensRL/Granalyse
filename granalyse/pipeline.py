@@ -38,10 +38,7 @@ class _Tee:
 
 @contextlib.contextmanager
 def tee_stdout(log_path, mode="w"):
-    """Mirror everything printed to stdout into ``log_path`` (a run log) for the
-    duration of the block, while still writing to the real stdout. The parent
-    directory is created if needed. ``mode="a"`` appends (used by the HPC runner,
-    which is invoked once per model and accumulates one log per star)."""
+    """Mirror everything printed to stdout into ``log_path`` (a run log)"""
     os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
     with open(log_path, mode) as logfile, \
             contextlib.redirect_stdout(_Tee(sys.stdout, logfile)):
@@ -49,7 +46,7 @@ def tee_stdout(log_path, mode="w"):
 
 
 def _result_dirname(model_name, cfg):
-    """Original result-directory naming: model_X_binned_gaussian_correlatedinf etc."""
+    """Result-directory name"""
     parts = [f"model_{model_name}",
              "binned" if cfg.bin_data else "unbinned",
              cfg.pulsation_model.lower()]
@@ -66,8 +63,7 @@ def _star_numax(star):
 
 
 def _assign_paths(fit, star_name, model, cfg):
-    """Set all output paths on a FitCase (original naming scheme). FitData is
-    written gzip-compressed; the .csv.gz extension drives the compression."""
+    """Set all output paths on a FitCase. FitData is written gzip-compressed"""
     respath = os.path.join(cfg.output_dir, star_name, _result_dirname(model.name, cfg))
     fit.respath = respath + os.sep
     fit.fitdatafile = os.path.join(respath, f"FitData_model_{model.name}.csv.gz")
@@ -80,9 +76,7 @@ def _assign_paths(fit, star_name, model, cfg):
 
 
 def _resolve_fitdatafile(fit):
-    """Point fit.fitdatafile at an existing FitData file, preferring the
-    compressed name but falling back to a legacy uncompressed .csv from older
-    runs. Returns True if a FitData file exists."""
+    """Point fit.fitdatafile at an existing FitData file. Returns True if a FitData file exists."""
     if not os.path.exists(fit.fitdatafile) and fit.fitdatafile.endswith(".csv.gz"):
         legacy = fit.fitdatafile[:-3]
         if os.path.exists(legacy):
@@ -91,12 +85,9 @@ def _resolve_fitdatafile(fit):
 
 
 def prepare_star_data(star, cfg):
-    """Prepare the star-level data products shared by every model: read the
-    PDS, mask systematics, bin, cut low frequencies and compute eta.
-
-    Returns a FitCase carrying the processed spectrum and stellar metadata,
-    with no model-specific parameters, priors or output paths set. Reused
-    across a star's models so the spectrum is read and processed only once.
+    """
+    Prepare the star-level data products shared by every model.
+    Returns a FitCase carrying the processed spectrum and stellar metadata.
     """
     kind = cfg.star_kinds.get(star.name, "star")
     numax = star.numax
@@ -134,12 +125,10 @@ def prepare_star_data(star, cfg):
 
 
 def prepare_fit_case(star, model_name, cfg, star_data=None):
-    """Build a fully prepared FitCase (data, parameters, priors, paths).
-
+    """
+    Build a fully prepared FitCase (data, parameters, priors, paths).
     If star_data (a FitCase from prepare_star_data) is given, the prepared
-    spectrum is reused, avoiding a redundant read/bin per model; otherwise the
-    star-level data is prepared here. prior_samples are left unset and drawn
-    lazily at plot time (keeps prepared pickles small).
+    spectrum is reused, avoiding a redundant read/bin per model
     """
     model = get_model(model_name)
     if star_data is None:
@@ -161,10 +150,8 @@ def prepare_fit_case_light(star, model_name, cfg):
     """Build a FitCase with metadata, fit-parameter configuration and output
     paths but WITHOUT reading or preparing the spectrum.
 
-    Sufficient to detect and finalise an already-completed fit (load posteriors,
-    recompute the result table) without the cost of reading/binning the PDS;
-    not enough to run a new fit (no priors/data). Used by the skip_replot fast
-    path. fit.fitdatafile is resolved to an existing file if one is present.
+    Sufficient to detect and finalise an already-completed fit. 
+    Used by the skip_replot fast path. 
     """
     model = get_model(model_name)
     fit = FitCase(name=star.name, model=model.name, seed=cfg.seed)
@@ -186,12 +173,10 @@ def prepare_fit_case_light(star, model_name, cfg):
 
 
 def finalize_existing_fit(fit, model):
-    """Load a previously completed fit from disk and (re)compute its result
+    """
+    Load a previously completed fit from disk and (re)compute its result
     table without re-running the sampler or preparing the spectrum.
-
-    Requires only fit.fitparams (from configure_fit_parameters) and the output
-    paths; the granulation normalisation reads fit.fitresults, never the raw
-    data. Returns (fit, evidence, evidence_err).
+    Returns (fit, evidence, evidence_err).
     """
     evidence_file = os.path.join(fit.respath, f"Evidence_model_{model.name}.txt")
     fit.fitdata = pd.read_csv(fit.fitdatafile)
@@ -208,20 +193,17 @@ def finalize_existing_fit(fit, model):
 
 
 def run_single_fit(fit, model=None, make_plots=True, skip_replot=False):
-    """Fit one prepared FitCase (or load a previous run from disk) and write
-    all result files and figures. Returns (fit, evidence, evidence_err).
-
-    With skip_replot, figures are not regenerated for fits that already exist
-    on disk (the fast resume path); a freshly run fit is always plotted.
+    """
+    Fit one prepared FitCase (or load a previous run from disk) and write
+    all result files and figures. 
+    Returns (fit, evidence, evidence_err).
     """
     if model is None:
         model = get_model(fit.model)
     os.makedirs(fit.respath, exist_ok=True)
 
-    # Resume from an existing run; fall back to a legacy uncompressed FitData
-    # file so older result directories remain resumable (pandas reads both).
+    # Resume from an existing run
     existing = _resolve_fitdatafile(fit)
-    # Only suppress plotting when reusing an existing fit; new fits still plot.
     do_plots = make_plots and not (existing and skip_replot)
     if existing and skip_replot:
         print(f"{fit.name} / model {model.name}: skip_replot -- reusing existing figures")
@@ -260,8 +242,7 @@ def _run_star_logged(star, cfg, star_dir):
     evidences = {}
     summary = {"star": star.name, "models": {}}
 
-    # The spectrum is read/binned once per star and shared across its models;
-    # prepared lazily so the skip_replot fast path can avoid it entirely.
+    # The spectrum is read/binned once per star and shared across its models
     star_data = None
     for model_name in cfg.models:
         model = get_model(model_name)
@@ -271,8 +252,6 @@ def _run_star_logged(star, cfg, star_dir):
 
         fit = None
         if cfg.skip_replot:
-            # Fast path: finalise an already-completed fit without reading the
-            # spectrum. Falls through to a full run if no results exist yet.
             light = prepare_fit_case_light(star, model_name, cfg)
             if os.path.exists(light.fitdatafile):
                 print(f"{star.name} / model {model.name}: skip_replot -- existing "

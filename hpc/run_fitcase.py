@@ -1,14 +1,13 @@
-"""Stage 2 (HPC workflow): run one star's models (executed by the SLURM array job).
+"""
+Run one star's models (executed by the SLURM array job).
 
-Builds the FitCase(s) on the node from the config and the star's PDS, so only
-the config and raw PDS files live on the cluster. One or several models can be
-run for the star in a single process (the spectrum is prepared once and reused):
+Builds the FitCase(s) on the node from the config and the star's PDS.
 
     python hpc/run_fitcase.py --config config.yaml --star <name> --model H,J,T \\
         [--pds-file <staged.dat>] [--results-dir Results]
 
 The result paths are remapped under --results-dir so the job can run from any
-working directory (e.g. cluster scratch space).
+working directory.
 """
 
 import argparse
@@ -47,10 +46,7 @@ def _run_config(args):
     if not models:
         raise SystemExit("--model is required (e.g. 'H' or 'H,J,T')")
 
-    # Mirror this run's terminal output to <results-dir>/<star>/run.log so it is
-    # rsynced back alongside the fit results (matching the local pipeline, which
-    # writes a run.log per star). run_node.sh calls this script once per model,
-    # so the log is appended to and accumulates the star's models.
+    # Mirror this run's terminal output to <results-dir>/<star>/run.log
     safe_name = os.path.basename(os.path.normpath(star.name))
     log_path = os.path.join(args.results_dir, safe_name, "run.log")
 

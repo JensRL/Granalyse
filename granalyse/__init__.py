@@ -3,7 +3,7 @@
 import jax
 
 # Double precision throughout: the chi-squared likelihood and evidence
-# integration are numerically sensitive (matches the original framework).
+# integration are numerically sensitive.
 jax.config.update("jax_enable_x64", True)
 
 __version__ = "0.1.0"

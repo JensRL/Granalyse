@@ -63,11 +63,7 @@ def run_fit(fit, model=None):
     }
     sampler = dynesty.NestedSampler(loglike, ptform, ndims, **skwargs)
     start_time = time.time()
-    # dynesty's progress bar prints a line per iteration. On an HPC node that
-    # stream is captured into the job log on the shared filesystem, turning
-    # every iteration into a write back over the network. Disable it when
-    # running under SLURM (or when GRANALYSE_NO_PROGRESS is set); keep it for
-    # interactive/local runs where the live progress is useful.
+    # Disable dynesty's per-iteration progress bar for HPC use
     show_progress = not (os.environ.get("SLURM_JOB_ID")
                          or os.environ.get("GRANALYSE_NO_PROGRESS"))
     sampler.run_nested(print_progress=show_progress, save_bounds=False, dlogz=1)

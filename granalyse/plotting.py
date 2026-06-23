@@ -1,13 +1,5 @@
-"""Plotting and presentation functions for fitted granulation models.
-
-Public API (called by the pipeline):
-    prior_predictive_PDS(fit, model=None)
-    present_fit(fit, model=None)
-
-Internal helpers:
-    _one_component, _bin_sigmoid, _prior_corner,
-    _downsample_freq, _build_param_dict,
-    _get_model_samples, _get_model_median_params
+"""
+Plotting and presentation functions for fitted granulation models.
 """
 
 import matplotlib
@@ -30,9 +22,6 @@ from .data import bin_data_simplistic
 
 plt.rcParams["agg.path.chunksize"] = 20000
 
-# Corner-plot panels are dense filled contours; left as vectors they dominate
-# the output size. Rasterising the data layers (everything below this zorder)
-# while keeping axes, ticks, labels and titles as vectors cuts the PDF ~2.5x.
 _CORNER_RASTER_ZORDER = 10
 _CORNER_RASTER_DPI = 150
 
@@ -84,7 +73,6 @@ def _downsample_freq(freq, model_arr, target_length=1000):
 
 # ---------------------------------------------------------------------------
 # Build the parameter dict that model.func_real / func_back expects.
-# The calling convention is:  func_real(nu=, eta=, numax_fit=, **params)
 # ---------------------------------------------------------------------------
 
 def _has_key(source, key):
@@ -95,16 +83,8 @@ def _has_key(source, key):
 
 
 def _resolve_corr_params(fit, model, source, i=None, numax_for_scaling=None):
-    """Return (a, b, d) from either posterior samples or prior_samples.
-
-    source           – dict of arrays (prior_samples) or fitresults DataFrame
-    i                – sample index (int); None means take element [0] (median)
-    numax_for_scaling – numax value to use when reconstructing physical params
-                        from scatter factors.  If None, read numax_fit from source.
-                        Pass fit.numax for prior-predictive (original quirk: the
-                        original uses the fixed numax, not the sampled one, when
-                        computing gran_a/b/d during prior predictive evaluation).
-
+    """
+    Return (a, b, d) from either posterior samples or prior_samples.
     Returns numpy scalars safe to pass to jax model functions.
     """
     def _get(key):
@@ -151,7 +131,7 @@ def _call_model_func(func, nu, eta, param_dict):
 
 
 # ---------------------------------------------------------------------------
-# prior_corner  (used internally and can be called standalone)
+# prior_corner  
 # ---------------------------------------------------------------------------
 
 def _prior_corner(fit):
@@ -231,7 +211,6 @@ def prior_predictive_PDS(fit, model=None):
 
     for i in range(N):
         # Resolve physical granulation params.
-        # Original quirk: corr scaling uses fit.numax (fixed), not sampled numax_fit[i].
         a, b, d = _resolve_corr_params(fit, model, prior_samples, i,
                                        numax_for_scaling=fit.numax if fit.corr_inference else None)
 
@@ -430,9 +409,6 @@ def present_fit(fit, model=None):
     def _rc(key):
         return np.random.choice(fd[key].values, N)
 
-    # Draw order matches the original present_fit for reproducibility.
-    # Corr-inference: numax first, then sigma_a, sigma_b, then common params,
-    # then sigma_d and k, then any extra model-specific params (c, etc.)
     numaxs_N = _rc("numax_fit")
     if fit.corr_inference:
         if "sigma_a" in fd.columns:
@@ -513,9 +489,8 @@ def present_fit(fit, model=None):
                      "r", linewidth=0.5, alpha=0.2, rasterized=True)
 
     # ---- Granulation components (delegated to the model object) ----
-    # Each model draws its own component visualisation (generic Harvey
-    # profiles by default; e.g. model J marks b and d with vertical lines)
-    # and reports floor levels for the y-limit adjustment below.
+    # Each model draws its own components (generic Harvey profiles by default)
+    # and returns floor levels for the y-limit adjustment below.
     component_levels = model.draw_pds_components(ax1, freq, fit.eta,
                                                  median_p, np.max(power))
 
@@ -650,8 +625,7 @@ def present_fit(fit, model=None):
     if lower_ylim < 1e-3 and fit.data_format == "STAR":
         lower_ylim = 1e-3
 
-    # Place data_max at 75 % of the log axis height, keeping the top 20 % clear
-    # of the legend. On a log scale: hi = lo * (data_max / lo) ** (1 / 0.75)
+    # Place data_max at 75 % of the log axis height
     log_lo = np.log10(max(lower_ylim, 1e-10))
     log_peak = np.log10(max(data_max, lower_ylim * 10))
     upper_ylim = 10 ** (log_lo + (log_peak - log_lo) / 0.75)
@@ -834,8 +808,7 @@ def present_fit(fit, model=None):
 
 
 # ---------------------------------------------------------------------------
-# Radius inference diagnostics (two-panel posterior figure, following the
-# Perky validation plots of the radius-relation framework)
+# Radius inference diagnostics (two-panel posterior figure)
 # ---------------------------------------------------------------------------
 
 _RADIUS_COLORS = {

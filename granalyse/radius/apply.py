@@ -1,14 +1,14 @@
 """Radius inference from granulation posteriors via the derived
 granulation-radius scaling relations, with Bayesian Model Averaging.
 
-Port of the GranRadRels application pipeline (arXiv:2605.26742). The
-relation, applied in space relative to the reference star Perky:
+The relation is applied in space relative to the reference star Perky
+(scaling relations from arXiv:2605.26742):
 
   log10(R_rel) = fac + y*log10(charb_rel) + x*log10(A_gran_rel)
                + z*log10(Teff_rel) + z2*(feh - feh_Perky) + sigma*eps
 
-Random draws use the global numpy RNG, exactly as the original; seed
-with np.random.seed() for reproducibility.
+Random draws use the global numpy RNG; seed with np.random.seed() for
+reproducibility.
 """
 
 import numpy as np

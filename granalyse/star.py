@@ -1,9 +1,4 @@
-"""Core data containers: user-facing Star input and the per-fit FitCase state.
-
-FitCase replaces the SingleFit class that was duplicated across the original
-NSGF main scripts. Attribute names are kept identical to SingleFit so ported
-functions remain directly comparable to the originals.
-"""
+"""Core data containers: user-facing Star input and the per-fit FitCase state."""
 
 from dataclasses import dataclass, field
 import numpy as np
@@ -14,7 +9,7 @@ class Star:
     """User-facing description of one star to analyse.
 
     Either `numax` is given directly, or `logg` and `teff` are given and
-    numax is estimated from the scaling relation (see data.calc_numax).
+    numax is estimated from the asteroseismic scaling relation (see data.calc_numax).
     `teff` and `feh` (with uncertainties) are additionally required for
     radius inference; `mission` selects the bolometric correction.
     """
@@ -40,10 +35,7 @@ class Star:
 
 @dataclass
 class FitCase:
-    """State of a single fit: one star x one background model x one mode.
-
-    Attribute names mirror the original SingleFit class.
-    """
+    """State of a single fit: one star x one background model x one mode."""
 
     # General information
     name: str
@@ -105,7 +97,7 @@ class FitCase:
     # Correlated inference
     corr_inference: bool = False
 
-    # Stellar parameters for radius inference (new in Granalyse)
+    # Stellar parameters for radius inference
     teff: float | None = None
     teff_err: float | None = None
     feh: float | None = None

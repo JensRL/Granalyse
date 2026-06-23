@@ -1,14 +1,14 @@
-"""The built-in background models D, J, H, T.
+"""
+The built-in background models of the pipeline
 
-Model functions are the original NSGF jax implementations. Each model bundles
-its parameters, scaling-law coefficients, initial guesses, model-specific
-priors, ordering constraint, and amplitude normalisation.
+Each model bundles its parameters, scaling-law coefficients, initial guesses,
+model-specific priors, ordering constraint, and amplitude normalisation.
 
-Model forms (nu in muHz, amplitudes in ppm):
-  D: single Harvey       (a^2/b) / (1 + (nu/b)^l)
-  J: Kallinger hybrid    a^2 / (1 + (nu/b)^l + (nu/d)^k)
-  H: two Harvey terms    (a^2/b)/(1+(nu/b)^l) + (c^2/d)/(1+(nu/d)^k)
-  T: three Harvey terms  H + (e^2/f)/(1+(nu/f)^m)
+Implemented models:
+  D: single Harvey component
+  J: hybrid model 
+  H: two Harvey components    
+  T: three Harvey components
 All share white noise W, an activity Lorentzian (a2, b2), and (in the *_real
 variants) a Gaussian oscillation envelope (Posc, numax_fit, sigma).
 """
@@ -226,8 +226,7 @@ def _priors_T(fit):
 
 
 def _priors_D(fit):
-    # Not covered by the original build_common_priors (model D would crash
-    # there); defined here consistently with the H-style amplitude priors.
+    # Defined here, consistent with the H-style amplitude priors.
     if not fit.corr_inference:
         return {
             "a": _lognormal_prior(K14, "a", fit.numax),
@@ -306,7 +305,6 @@ def _norm_J(fit):
 # ================== Granulation observables for the radius relations ==================
 # Per-sample (charb, A_gran) from a posterior DataFrame; A_gran is the
 # normalised total granulation amplitude before the bolometric correction.
-# Ports of GranRadRels transform_posterior_to_observables, per model.
 def norm_factors_J_vectorised(b, d, l, k, n_nodes=200, t_range=20.0):
     """Vectorised model-J normalisation via Gauss-Legendre quadrature with the
     substitution nu = exp(T*x), x in [-1, 1] (T=20 covers (0, inf) in practice)."""

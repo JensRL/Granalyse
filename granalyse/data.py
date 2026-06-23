@@ -1,9 +1,4 @@
-"""Data preparation helpers for Granalyse.
-
-Ported from data_helpers.py (NSGF/Grendel). Functions that belong to
-later phases (fitting, normalisation, numax retrieval from catalogues)
-are not included here.
-"""
+"""Data preparation helpers for Granalyse."""
 
 import numpy as np
 
@@ -144,8 +139,7 @@ def mask_systematics(freq, power, numax, sys_dict=SC_sys_peaks,
     win_lengths += (win_lengths % 2 == 0)
     csum = np.concatenate(([0.0], np.cumsum(power)))
     half = win_lengths // 2
-    # Variable-width rolling mean, vectorised over all bins (identical to the
-    # previous per-bin loop: window [i-half, i+half] clipped to [0, n)).
+    # Variable-width rolling mean over all bins: window [i-half, i+half] clipped to [0, n).
     idx = np.arange(n)
     L = np.maximum(0, idx - half)
     R = np.minimum(n, idx + half + 1)
@@ -358,7 +352,7 @@ def mask_systematics(freq, power, numax, sys_dict=SC_sys_peaks,
         plt.yscale('log')
         plt.xlabel('Frequency (µHz)')
         plt.ylabel('Power Density')
-        plt.title('Systematic Cleaning (merged refine)')
+        plt.title('Systematic Cleaning')
         plt.legend()
         plt.tight_layout()
         plt.show()
@@ -479,7 +473,7 @@ def process_binning(freq, power, fit, bin_data, bin_res, bin_visuals):
         Frequency array in µHz.
     power : ndarray
         Power array.
-    fit : FitCase (or SingleFit-compatible object)
+    fit : FitCase-compatible object
         State object updated in-place with binned data and metadata.
     bin_data : bool
         Whether to bin to a fixed resolution.
@@ -588,7 +582,7 @@ def cut_low_frequencies(freq, power, fit, remove_low_freq):
 
 
 def calc_eta(fit_class):
-    """Apodisation correction for Nyquist roll-off.
+    """Apodisation correction using Nyquist frequency.
 
     Parameters
     ----------
@@ -599,26 +593,16 @@ def calc_eta(fit_class):
     eta : ndarray
     """
     x = (np.pi / 2) * fit_class.freq / fit_class.nyquist
-    eta = np.sinc(x / np.pi)
+    eta = np.sinc(x / np.pi) #IMPORTANT: np.sinc definition is normalized as sin(pi*x)/(pi*x)
     return eta
 
 
 def calc_numax(logg, teff):
-    """Estimate numax from the scaling relation.
-
-    .. math::
-
-        \\nu_{\\max} = \\frac{10^{\\log g}}{10^{\\log g_\\odot}}
-                       \\left(\\frac{T_{\\rm eff}}{T_{\\rm eff,\\odot}}\\right)^{-0.5}
-                       \\nu_{\\max,\\odot}
+    """
+    Estimate numax using the asteroseismic scaling relation.
 
     Solar reference values used: logg_sun=4.44, teff_sun=5777 K,
-    numax_sun=3090 µHz (identical to the original data_helpers.py).
-
-    Note: the original ``calc_numax(fit_class)`` read logg/teff from a
-    STAGGER model table on disk and required ``fit_class.data_format ==
-    'STAGGER'``.  That table-lookup path is not reproduced here; call this
-    pure function directly with the stellar parameters instead.
+    numax_sun=3090 µHz.
 
     Parameters
     ----------
