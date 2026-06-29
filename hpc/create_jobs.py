@@ -29,10 +29,14 @@ import tarfile
 RESULTS_DIR = "Results"
 JOB_NAME = "granalyse_fits"
 PARTITION = "q24,q28,q36,q40"        # comma-separated SLURM partition(s)
-MAX_ARRAY = 10000           # cap on array size; stars are pooled per task to fit
+MAX_ARRAY = 2500            # target array size; stars are pooled per task to fit
+MAX_ARRAY_CAP = 10000       # hard cap (cluster queue limit); bundling may bump
+                            # the array up to here to keep walltime under the cap
 MAX_PARALLEL = 256          # max simultaneously running array tasks
 CPUS = 1                    # one fit runs on a single core
 MEM_PER_CPU = "8G"
+WALLTIME_LIMIT_DAYS = 15.0  # cluster hard cap on a single job's --time
+WALLTIME_WARN_DAYS = 14.5   # bump bundling if the walltime estimate exceeds this
 
 
 # ---- run_node.sh template  ----------------------------
@@ -85,6 +89,81 @@ def _fmt_walltime(hours):
     h, rem = divmod(rem, 3600)
     m, s = divmod(rem, 60)
     return f"{d}-{h:02d}:{m:02d}:{s:02d}" if d else f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def _resolve_array_size(n_units, hours_per_fit, max_models, parser):
+    """Choose the array size, bumping it past MAX_ARRAY if needed for walltime.
+
+    Each task processes ``units_per_task = ceil(n_units / max_array)`` stars
+    sequentially, so its --time scales with the bundle size:
+    ``hours_per_fit * max_models * units_per_task``. A small array (few tasks,
+    many stars each) can therefore exceed the cluster's walltime cap. When the
+    estimate breaches WALLTIME_WARN_DAYS, compute the smallest array that brings
+    it back under and let the user accept the bump.
+
+    Returns the chosen ``max_array``.
+    """
+    def _hours(units_per_task):
+        return hours_per_fit * max_models * units_per_task
+
+    units_per_task = max(1, math.ceil(n_units / MAX_ARRAY))
+    est_hours = _hours(units_per_task)
+    if est_hours <= WALLTIME_WARN_DAYS * 24:
+        return MAX_ARRAY
+
+    # Largest stars-per-task that still fits under the warn threshold.
+    max_units = int((WALLTIME_WARN_DAYS * 24) // (hours_per_fit * max_models))
+    if max_units < 1:
+        # Even one star per task exceeds the cap -- bundling cannot help.
+        print(f"\nWARNING: a single star's {max_models} model fit(s) at "
+              f"{hours_per_fit:g} h/fit need {_fmt_walltime(_hours(1))}, already "
+              f"over the {WALLTIME_LIMIT_DAYS:g}-day cap. Lower --hours-per-fit "
+              "or split the models across separate runs.")
+        if sys.stdin.isatty():
+            if input("Proceed anyway (1 star/task)? [y/N]: ").strip().lower() \
+                    not in ("y", "yes"):
+                parser.error("Aborted: per-fit walltime exceeds the cluster cap.")
+        else:
+            print("(non-interactive: proceeding with 1 star/task)")
+        return n_units
+
+    needed_array = math.ceil(n_units / max_units)
+    capped = min(needed_array, MAX_ARRAY_CAP)
+    upt_capped = max(1, math.ceil(n_units / capped))
+    hours_capped = _hours(upt_capped)
+
+    print(f"\nWARNING: with MAX_ARRAY={MAX_ARRAY}, each task bundles "
+          f"{units_per_task} star(s) and needs {_fmt_walltime(est_hours)} "
+          f"(> {WALLTIME_LIMIT_DAYS:g}-day cap).")
+
+    if needed_array > MAX_ARRAY_CAP:
+        # Cannot get under the cap even at the maximum array size.
+        n_tasks = math.ceil(n_units / upt_capped)
+        print(f"  Even at the maximum MAX_ARRAY={MAX_ARRAY_CAP} "
+              f"({upt_capped} star(s)/task, {n_tasks} tasks), each task needs "
+              f"{_fmt_walltime(hours_capped)} -- still over the cap.")
+        if sys.stdin.isatty():
+            if input(f"Proceed anyway at MAX_ARRAY={MAX_ARRAY_CAP}? [y/N]: ") \
+                    .strip().lower() not in ("y", "yes"):
+                parser.error("Aborted: walltime exceeds the cap even at the "
+                             "maximum array size. Lower --hours-per-fit.")
+        else:
+            print(f"(non-interactive: proceeding at MAX_ARRAY={MAX_ARRAY_CAP})")
+        return MAX_ARRAY_CAP
+
+    # A bump within the cap brings the walltime under the limit.
+    print(f"  To stay under {WALLTIME_WARN_DAYS:g} days, MAX_ARRAY must bump "
+          f"from {MAX_ARRAY} to {capped}/{MAX_ARRAY_CAP} "
+          f"({upt_capped} star(s)/task, {_fmt_walltime(hours_capped)}).")
+    if not sys.stdin.isatty():
+        print(f"(non-interactive: bumping MAX_ARRAY to {capped})")
+        return capped
+    if input(f"Bump MAX_ARRAY to {capped} and continue? [Y/n]: ") \
+            .strip().lower() in ("", "y", "yes"):
+        return capped
+    print(f"Keeping MAX_ARRAY={MAX_ARRAY}; the job may be rejected for "
+          f"exceeding the {WALLTIME_LIMIT_DAYS:g}-day walltime cap.")
+    return MAX_ARRAY
 
 
 def _scan(config, results_dir):
@@ -293,8 +372,10 @@ def main():
 
     _build_source_tarball(repo_dir, "granalyse_src.tar.gz")
 
-    # Pool stars into tasks so the array stays within MAX_ARRAY.
-    units_per_task = max(1, math.ceil(n_units / MAX_ARRAY))
+    # Pool stars into tasks so the array stays within the target size, bumping
+    # it up if the resulting per-task walltime would breach the cluster cap.
+    max_array = _resolve_array_size(n_units, hours_per_fit, max_models, parser)
+    units_per_task = max(1, math.ceil(n_units / max_array))
     n_tasks = math.ceil(n_units / units_per_task)
     limit = min(n_tasks, MAX_PARALLEL)
 
