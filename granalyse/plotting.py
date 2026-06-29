@@ -299,14 +299,22 @@ def present_fit(fit, model=None):
     if fit.bin_data:
         freq_raw = fit.freq_raw
         power_raw = fit.power_raw
-        mask_low = freq_raw <= np.min(freq)
-        if np.any(mask_low):
-            ax1.plot(freq_raw[mask_low], power_raw[mask_low],
-                     color="grey", alpha=0.4, linewidth=0.5, label="Raw PDS", rasterized=True)
-        if np.any(~mask_low):
-            ax1.plot(freq_raw[~mask_low], power_raw[~mask_low],
-                     color="grey", alpha=0.8, linewidth=0.5,
-                     label="Raw PDS" if not np.any(mask_low) else None, rasterized=True)
+        # Raw points below the fitted range are context only -- a low-frequency
+        # cut excluded them -- so draw those faintly and the rest darker. With
+        # no cut the fitted range starts at the first bin, so there is no such
+        # region; splitting then leaves a stray 1-3 point faint stub
+        # disconnected from the spectrum, so draw the raw as a single line.
+        split = int(np.searchsorted(freq_raw, np.min(freq)))
+        if fit.freq_removed is not None and split > 1:
+            # Share the boundary sample so the two segments join (no gap).
+            ax1.plot(freq_raw[:split + 1], power_raw[:split + 1],
+                     color="grey", alpha=0.4, linewidth=0.5, label="Raw PDS",
+                     rasterized=True)
+            ax1.plot(freq_raw[split:], power_raw[split:],
+                     color="grey", alpha=0.8, linewidth=0.5, rasterized=True)
+        else:
+            ax1.plot(freq_raw, power_raw, color="grey", alpha=0.8,
+                     linewidth=0.5, label="Raw PDS", rasterized=True)
         if fit.likelihood not in {"mixture"}:
             ax1.plot(freq, power, color="k", linewidth=1,
                      label="Fitted Binned PDS", rasterized=True)
@@ -316,10 +324,18 @@ def present_fit(fit, model=None):
         ax1.plot(freq, power, color="grey", alpha=0.8, linewidth=0.5,
                  label="Fitted Raw PDS", rasterized=True)
         if fit.likelihood not in {"mixture"}:
-            mask_low = freq_binned <= np.min(freq)
-            if np.any(~mask_low):
-                ax1.plot(freq_binned[~mask_low], power_binned[~mask_low],
-                         color="k", alpha=1, linewidth=1,
+            # The visual binning spans the full (pre-cut) spectrum. When a
+            # low-frequency cut was applied, drop the bins below the fitted
+            # range so the binned curve starts where the fit does; with no cut
+            # the whole binned curve is valid -- keep it all rather than
+            # clipping the first bin into a stray stub.
+            if fit.freq_removed is not None:
+                keep = freq_binned >= np.min(freq)
+                freq_b, power_b = freq_binned[keep], power_binned[keep]
+            else:
+                freq_b, power_b = freq_binned, power_binned
+            if freq_b.size:
+                ax1.plot(freq_b, power_b, color="k", alpha=1, linewidth=1,
                          label="Binned PDS", rasterized=True)
 
     if fit.likelihood in {"mixture"}:
