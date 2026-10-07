@@ -17,6 +17,12 @@ Usage
         --output-dir ./my_calibration \\
         --dry-run
 
+    # Normalise against your own reference star instead of Perky
+    python calibration/derive_relations.py sample.csv \\
+        --results-dir /path/to/results \\
+        --model H \\
+        --reference-json my_reference.json
+
 sample.csv columns (required)
 ------------------------------
     name        – star identifier (must match subdirectory name under results_dir)
@@ -34,14 +40,29 @@ Output
         Directly loadable by granalyse.radius.load_relation_coefficients(seed='user').
 
     <output-dir>/fit_data_<MODEL>_user.csv
-        Full MCMC draws (cmdstanpy output).
+        The same coefficient draws plus chain/draw indices and the per-draw
+        sampler diagnostics.
+
+    <output-dir>/fit_summary_<MODEL>_user.csv
+        Coefficient posterior summary: mean, sd, intervals, MCSE, ESS, R-hat.
+
+    <output-dir>/fit_diagnostics_<MODEL>_user.txt
+        CmdStan diagnose() report.
 
     <output-dir>/fit_<MODEL>_user.netcdf
-        ArviZ InferenceData object.
+        ArviZ InferenceData (coefficients + sample stats); skipped with a
+        warning if no netCDF backend is installed.
+
+    <output-dir>/latent_parameters_<MODEL>_user.csv.gz
+        Only with --save-latent: the 5N per-star latent parameters.
+
+The model samples 5N+6 parameters, so on a large sample the latent per-star
+parameters dominate everything written. They are excluded by default.
 """
 
 import argparse
 import glob
+import json
 import os
 import sys
 import tempfile
@@ -59,6 +80,43 @@ _BOLOMETRIC = {
 }
 
 R_SUN_CM = 6.957e10  # cm
+
+
+# ---------------------------------------------------------------------------
+# Reference star
+# ---------------------------------------------------------------------------
+def load_reference_params(path=None, model=None):
+    """Reference-star parameters used to normalise observables into relative space.
+
+    With `path` given, read that JSON; otherwise fall back to the shipped Perky
+    (KIC 6106415) parameters. The file must follow the same layout as
+    granalyse/radius/relations/perky_params.json:
+
+        {"name": ..., "teff": K, "R_cm": cm, "feh": dex,
+         "models": {"H": {"amp": ppm, "charb": muHz}, ...}}
+
+    `amp` must carry the same bolometric correction as the calibration sample,
+    i.e. be the posterior median of the mission-corrected A_gran.
+    """
+    if path is None:
+        from granalyse.radius import load_perky_params
+        return load_perky_params()
+
+    with open(path) as f:
+        ref = json.load(f)
+
+    missing = {"teff", "R_cm", "feh", "models"} - set(ref)
+    if missing:
+        raise ValueError(f"{path}: reference JSON missing key(s) {sorted(missing)}")
+    if model is not None:
+        if model not in ref["models"]:
+            raise ValueError(f"{path}: reference JSON has no entry for model {model}")
+        sub_missing = {"amp", "charb"} - set(ref["models"][model])
+        if sub_missing:
+            raise ValueError(
+                f"{path}: model {model} missing key(s) {sorted(sub_missing)}"
+            )
+    return ref
 
 
 # ---------------------------------------------------------------------------
@@ -112,9 +170,10 @@ def _compute_per_star_stats(charb_s, agran_s):
 # ---------------------------------------------------------------------------
 # Stan data assembly
 # ---------------------------------------------------------------------------
-def build_stan_data(sample_df, results_dir, model, mission, perky):
+def build_stan_data(sample_df, results_dir, model, mission, reference):
     """
-    Load posteriors, transform, normalise to Perky, and assemble Stan dict.
+    Load posteriors, transform, normalise to the reference star, and assemble
+    the Stan dict.
 
     Parameters
     ----------
@@ -122,7 +181,7 @@ def build_stan_data(sample_df, results_dir, model, mission, perky):
     results_dir : str or Path
     model       : 'H', 'J', or 'T'
     mission     : 'Kepler' or 'TESS'
-    perky       : dict from granalyse.radius.load_perky_params()
+    reference   : dict from load_reference_params()
 
     Returns
     -------
@@ -130,11 +189,11 @@ def build_stan_data(sample_df, results_dir, model, mission, perky):
     df_rel    : pd.DataFrame  (relative log-space values used for Stan)
     skipped   : list[str]   stars that could not be processed
     """
-    perky_amp   = perky["models"][model]["amp"]
-    perky_charb = perky["models"][model]["charb"]
-    perky_teff  = perky["teff"]
-    perky_R_cm  = perky["R_cm"]
-    perky_feh   = perky["feh"]
+    ref_amp   = reference["models"][model]["amp"]
+    ref_charb = reference["models"][model]["charb"]
+    ref_teff  = reference["teff"]
+    ref_R_cm  = reference["R_cm"]
+    ref_feh   = reference["feh"]
 
     rows = []
     skipped = []
@@ -169,15 +228,15 @@ def build_stan_data(sample_df, results_dir, model, mission, perky):
         R_cm   = float(row["radius"])    * R_SUN_CM
         R_cm_e = float(row["radius_err"]) * R_SUN_CM
 
-        R_rel     = R_cm   / perky_R_cm
-        R_rel_err = R_cm_e / perky_R_cm
+        R_rel     = R_cm   / ref_R_cm
+        R_rel_err = R_cm_e / ref_R_cm
 
-        teff_rel     = float(row["teff"])     / perky_teff
-        teff_err_rel = float(row["teff_err"]) / perky_teff
+        teff_rel     = float(row["teff"])     / ref_teff
+        teff_err_rel = float(row["teff_err"]) / ref_teff
 
         # log-space observables (relative) for gran amplitude and charb
-        lg_amp_rel   = lg_amp_mean   - np.log10(perky_amp)
-        lg_charb_rel = lg_charb_mean - np.log10(perky_charb)
+        lg_amp_rel   = lg_amp_mean   - np.log10(ref_amp)
+        lg_charb_rel = lg_charb_mean - np.log10(ref_charb)
 
         lg_R_rel     = np.log10(R_rel)
         lg_R_rel_err = R_rel_err / (R_rel * np.log(10))
@@ -190,7 +249,7 @@ def build_stan_data(sample_df, results_dir, model, mission, perky):
         feh_val = 0.0
         if not pd.isna(feh_raw):
             try:
-                feh_val = float(feh_raw) - perky_feh
+                feh_val = float(feh_raw) - ref_feh
                 has_feh = 1
             except (TypeError, ValueError):
                 pass
@@ -281,14 +340,30 @@ def validate_stan_data(stan_data):
 # ---------------------------------------------------------------------------
 # Initial values
 # ---------------------------------------------------------------------------
+#: Declared bounds of `feh_true` in relation_model.stan (parameters block).
+#: Keep in step with that declaration if it ever changes.
+_FEH_TRUE_BOUNDS = (-4.0, 1.0)
+
+#: How far inside a bound an initial value is placed. Stan rejects an init that
+#: sits exactly on a bound as well as one outside it — the unconstraining
+#: transform diverges there — so the clip has to land strictly inside.
+_INIT_MARGIN = 1e-4
+
+
 def _get_initial_values(df_rel):
-    """Deterministic starting point for the sampler."""
+    lo, hi = _FEH_TRUE_BOUNDS
+    feh_obs = np.asarray(df_rel["feh_obs"].values, dtype=float)
+    feh_init = np.clip(feh_obs, lo + _INIT_MARGIN, hi - _INIT_MARGIN)
+    clipped = feh_init != feh_obs
+    if clipped.any():
+        outside = feh_obs[clipped]
+
     return {
         "lg_teff_true": df_rel["lg_teff_obs"].values.tolist(),
         "lg_R_true":    df_rel["lg_R_obs"].values.tolist(),
         "lg_amp_true":  df_rel["lg_amp_obs"].values.tolist(),
         "lg_charb_true":df_rel["lg_charb_obs"].values.tolist(),
-        "feh_true":     df_rel["feh_obs"].values.tolist(),
+        "feh_true":     feh_init.tolist(),
         "fac":   0.01,
         "x":     0.5,
         "y":    -0.7,
@@ -303,8 +378,8 @@ def _get_initial_values(df_rel):
 # ---------------------------------------------------------------------------
 def run_stan(stan_data, df_rel, output_dir, model,
              chains=4, iterations=10000,
-             adapt_delta=0.95, max_treedepth=12):
-    """Compile and sample the Stan model; return (fit_data, az_data).
+             adapt_delta=0.95, max_treedepth=12, refresh=None, seed=None):
+    """Compile and sample the Stan model; return (fit, diagnostics).
 
     Sampling setup:
       - iter_warmup  = iterations // 3
@@ -312,7 +387,6 @@ def run_stan(stan_data, df_rel, output_dir, model,
       - per-chain init with 5% random jitter on scalar coefficients (rng seed 42)
     """
     try:
-        import arviz as az
         from cmdstanpy import CmdStanModel
     except ImportError as exc:
         raise ImportError(
@@ -345,47 +419,116 @@ def run_stan(stan_data, df_rel, output_dir, model,
         iter_sampling=int(2 * iterations / 3),
         inits=inits_list,
         show_progress=True,
+        refresh=refresh,
+        seed=seed,
         adapt_delta=adapt_delta,
         max_treedepth=max_treedepth,
     )
 
-    fit_data = fit.draws_pd()
-    az_data  = az.from_cmdstanpy(fit)
-    print("\n" + fit.diagnose())
+    diagnostics = fit.diagnose()
+    print("\n" + diagnostics)
 
-    return fit_data, az_data
+    return fit, diagnostics
 
 
 # ---------------------------------------------------------------------------
 # Save outputs
 # ---------------------------------------------------------------------------
-def save_outputs(fit_data, az_data, model, output_dir):
-    """Save coefficient draws, full fit CSV, and netCDF.
+def save_outputs(fit, model, output_dir, diagnostics=None, save_latent=False):
+    """Save the coefficient draws and everything needed to audit the fit.
 
-    The coefficient file relation_coefficients_<MODEL>_seeduser.csv has columns
-    fac, x, y, z, z2, sigma — directly loadable by
-    granalyse.radius.load_relation_coefficients(seed='user').
-
-    The file written here uses '_user' suffix. To use it directly with the
-    shipped loader you would need to rename or copy it into the relations/
-    package directory — see README.md for details.
+    Files written
+    -------------
+    relation_coefficients_<MODEL>_seeduser.csv
+        fac, x, y, z, z2, sigma — one row per draw. 
+    fit_data_<MODEL>_user.csv
+        The same coefficient draws plus chain/draw indices and the per-draw
+        sampler diagnostics (lp__, accept_stat__, stepsize__, treedepth__,
+        n_leapfrog__, divergent__, energy__). 
+    fit_summary_<MODEL>_user.csv
+        Posterior summary of the coefficients: mean, sd, intervals, MCSE,
+        ESS bulk/tail and R-hat.
+    fit_diagnostics_<MODEL>_user.txt
+        The CmdStan `diagnose()` report.
+    fit_<MODEL>_user.netcdf
+        ArviZ InferenceData (coefficients + sample stats). 
+    latent_parameters_<MODEL>_user.csv.gz
+        Only with `save_latent`: the 5N per-star latent parameters.
     """
+    import arviz as az
+
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     coeff_cols = ["fac", "x", "y", "z", "z2", "sigma"]
-    coeffs_df = fit_data[coeff_cols].copy()
+
+    # ── 1. coefficient draws ───────────────────────────────────────────────
+    coeffs_df = fit.draws_pd(vars=coeff_cols)
     coeff_path = output_dir / f"relation_coefficients_{model}_seeduser.csv"
     coeffs_df.to_csv(coeff_path, index=False)
-    print(f"\nCoefficient draws saved to {coeff_path}")
+    print(f"\nCoefficient draws saved to {coeff_path}  "
+          f"({len(coeffs_df)} draws)")
 
+    # ── 2. coefficients + per-draw sampler diagnostics ──────────────────────
+    method_vars = fit.method_variables()
+    n_draws, n_chains = next(iter(method_vars.values())).shape
+    audit = pd.DataFrame({
+        "chain__": np.repeat(np.arange(1, n_chains + 1), n_draws),
+        "draw__":  np.tile(np.arange(1, n_draws + 1), n_chains),
+    })
+    for key, arr in method_vars.items():
+        audit[key] = arr.flatten(order="F")
+    audit = pd.concat([audit, coeffs_df.reset_index(drop=True)], axis=1)
     full_path = output_dir / f"fit_data_{model}_user.csv"
-    fit_data.to_csv(full_path, index=False)
-    print(f"Full fit draws saved to {full_path}")
+    audit.to_csv(full_path, index=False)
+    print(f"Coefficient draws + sampler diagnostics saved to {full_path}")
+
+    # ── 3. InferenceData, summary, diagnose report ──────────────────────────
+    _AZ_STATS = {"lp__": "lp", "accept_stat__": "acceptance_rate",
+                 "stepsize__": "step_size", "treedepth__": "tree_depth",
+                 "n_leapfrog__": "n_steps", "divergent__": "diverging",
+                 "energy__": "energy"}
+    draws_xr = fit.draws_xr(vars=coeff_cols)
+    idata = az.from_dict({
+        "posterior": {v: draws_xr[v].transpose("chain", "draw").values
+                      for v in coeff_cols},
+        "sample_stats": {_AZ_STATS.get(k, k): v.T
+                         for k, v in method_vars.items()},
+    })
+
+    summary = az.summary(idata)
+    summary_path = output_dir / f"fit_summary_{model}_user.csv"
+    summary.to_csv(summary_path)
+    print(f"Posterior summary saved to {summary_path}")
+
+    if diagnostics:
+        diag_path = output_dir / f"fit_diagnostics_{model}_user.txt"
+        diag_path.write_text(diagnostics)
+        print(f"Sampler diagnostics saved to {diag_path}")
 
     nc_path = output_dir / f"fit_{model}_user.netcdf"
-    az_data.to_netcdf(str(nc_path))
-    print(f"ArviZ InferenceData saved to {nc_path}")
+    try:
+        idata.to_netcdf(str(nc_path))
+        print(f"ArviZ InferenceData saved to {nc_path}")
+    except (ValueError, ImportError) as exc:
+        print(f"  WARNING: could not write {nc_path.name} ({exc}).\n"
+              f"           Install a netCDF backend (pip install h5netcdf) if "
+              f"you want it; {full_path.name} holds the same draws.")
+
+    # ── 4. optional: the per-star latent parameters ─────────────────────────
+    if save_latent:
+        latent_vars = []
+        for column in fit.column_names:
+            if column.endswith("__"):
+                continue
+            base = column.split("[")[0]
+            if base not in coeff_cols and base not in latent_vars:
+                latent_vars.append(base)
+        latent_path = output_dir / f"latent_parameters_{model}_user.csv.gz"
+        latent = fit.draws_pd(vars=latent_vars)
+        latent.to_csv(latent_path, index=False, compression="gzip")
+        print(f"Latent per-star parameters saved to {latent_path} "
+              f"({len(latent_vars)} variables, {latent.shape[1]} columns)")
 
     # Print coefficient summaries
     print(f"\nCoefficient medians (model {model}):")
@@ -393,6 +536,12 @@ def save_outputs(fit_data, az_data, model, output_dir):
         vals = coeffs_df[col].values
         p16, p50, p84 = np.percentile(vals, [16, 50, 84])
         print(f"  {col:6s}: {p50:+.4f}  +{p84-p50:.4f}  -{p50-p16:.4f}")
+
+    max_rhat = float(summary["r_hat"].max())
+    n_div = int(audit["divergent__"].sum())
+    print(f"\n  max R-hat = {max_rhat:.4f}   divergences = {n_div} / {len(audit)}")
+    if max_rhat > 1.01 or n_div > 0:
+        print("  WARNING: check fit_diagnostics before using these coefficients.")
 
     return coeff_path
 
@@ -428,6 +577,13 @@ def main(argv=None):
         help="Photometric mission (sets bolometric correction).",
     )
     parser.add_argument(
+        "--reference-json", default=None,
+        help="JSON with the reference star used to normalise into relative "
+             "space (same layout as granalyse/radius/relations/perky_params.json). "
+             "Defaults to the shipped Perky (KIC 6106415) parameters. Whatever "
+             "is used here must also be used when applying the relations.",
+    )
+    parser.add_argument(
         "--chains", type=int, default=4,
         help="Number of MCMC chains.",
     )
@@ -442,6 +598,19 @@ def main(argv=None):
     parser.add_argument(
         "--max-treedepth", type=int, default=12,
         help="Stan max_treedepth.",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=None,
+        help="CmdStan RNG seed.",
+    )
+    parser.add_argument(
+        "--refresh", type=int, default=None,
+        help="Iterations between CmdStan progress reports.",
+    )
+    parser.add_argument(
+        "--save-latent", action="store_true",
+        help="Also write the 5N per-star latent parameters (lg_*_true, "
+             "feh_true). Large: 5N of the 5N+6 sampled parameters.",
     )
     parser.add_argument(
         "--dry-run", action="store_true",
@@ -465,19 +634,19 @@ def main(argv=None):
         sample_df["feh"] = np.nan
     print(f"  {len(sample_df)} stars in sample")
 
-    # Load Perky reference parameters
-    from granalyse.radius import load_perky_params
-    perky = load_perky_params()
-    print(f"  Perky (KIC 6106415): Teff={perky['teff']} K  "
-          f"R={perky['R_cm']/R_SUN_CM:.4f} R_sun  "
-          f"[Fe/H]={perky['feh']}")
-    print(f"  Model {args.model}: amp_perky={perky['models'][args.model]['amp']} ppm  "
-          f"charb_perky={perky['models'][args.model]['charb']} uHz")
+    # Load the reference star used for relative-space normalisation
+    reference = load_reference_params(args.reference_json, model=args.model)
+    ref_name = reference.get("name", "Perky (KIC 6106415)")
+    print(f"  Reference {ref_name}: Teff={reference['teff']} K  "
+          f"R={reference['R_cm']/R_SUN_CM:.4f} R_sun  "
+          f"[Fe/H]={reference['feh']}")
+    print(f"  Model {args.model}: amp_ref={reference['models'][args.model]['amp']} ppm  "
+          f"charb_ref={reference['models'][args.model]['charb']} uHz")
 
     # Build Stan data dict
     print(f"\nPreparing Stan data for model {args.model} ...")
     stan_data, df_rel, skipped = build_stan_data(
-        sample_df, args.results_dir, args.model, args.mission, perky,
+        sample_df, args.results_dir, args.model, args.mission, reference,
     )
     if skipped:
         print(f"\n{len(skipped)} stars skipped: {skipped}")
@@ -501,16 +670,19 @@ def main(argv=None):
         return 0
 
     # Run Stan
-    fit_data, az_data = run_stan(
+    fit, diagnostics = run_stan(
         stan_data, df_rel, args.output_dir, args.model,
         chains=args.chains,
         iterations=args.iterations,
         adapt_delta=args.adapt_delta,
         max_treedepth=args.max_treedepth,
+        refresh=args.refresh,
+        seed=args.seed,
     )
 
     # Save outputs
-    save_outputs(fit_data, az_data, args.model, args.output_dir)
+    save_outputs(fit, args.model, args.output_dir,
+                 diagnostics=diagnostics, save_latent=args.save_latent)
     return 0
 
 

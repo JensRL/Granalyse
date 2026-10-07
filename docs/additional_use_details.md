@@ -25,8 +25,7 @@ evidence, fit summary, PDS/corner/diagnostic figures), a `summary.json` with
 the BMA radius, and a top-level `overview.csv`. Completed fits are detected
 and loaded on re-runs, so interrupted batches resume cheaply. Set
 `skip_replot: true` to also reuse existing figures on resume instead of
-regenerating them — the corner plots dominate runtime, so this makes
-resuming a stopped run substantially faster.
+regenerating them.
 
 The same steps are available as a Python API:
 
@@ -36,9 +35,6 @@ from granalyse.pipeline import run_pipeline
 
 run_pipeline(load_config("config.yaml"))
 ```
-
-or piecewise (`granalyse.pipeline.prepare_fit_case`, `run_single_fit`,
-`granalyse.radius.infer_radius`) for custom workflows.
 
 Input spectra are two-column ASCII files (frequency [µHz], power density
 [ppm²/µHz]), e.g. KASOC power spectra.
@@ -50,11 +46,6 @@ Input spectra are two-column ASCII files (frequency [µHz], power density
   fitted scatter factors. Set `correlated_inference: false` to fit them freely.
 - **Peakbogging mode**: a background-only likelihood with a mixture treatment
   of the oscillation region (`pulsation_model: Peakbogging`).
-- **Radius inference** propagates the full coefficient posteriors of the
-  scaling relations (shipped in `granalyse/radius/relations/`, derivation
-  seed 42 of arXiv:2605.26742) including intrinsic scatter, and combines
-  models via evidence-weighted Bayesian Model Averaging. It requires Teff
-  (and ideally [Fe/H]) for each star.
 - **Simulations** (`kind: simulation`, e.g. STAGGER/CO5BOLD spectra) are fit
   through the same pipeline with νmax from log g/Teff and no instrumental
   systematics masking.

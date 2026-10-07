@@ -24,7 +24,7 @@ source gvenv/bin/activate
 pip install -e .                
 ```
 
-Optionally, to be able to re-derive the granulation–radius relations yourself, install the
+Optionally, to be able to re-derive granulation–radius relations yourself, install the
 calibration extra:
 
 ```bash
@@ -57,15 +57,15 @@ granalyse run config.yaml
 
 **Computation time**: note that the nested sampling is computationally expensive. Depending on the duration, quality, and degree of binning of the PDS, the runtime per model may reach up to 1h.
 
-**Output size**: the saved figures and posteriors can be quite large, resulting in up to 40-50 MB 
+**Output size**: the saved figures and posteriors can be quite large, resulting in around 30 MB 
 of data being generated for each chosen model per star.
 
 
 ## What it does
 
-For each star you provide (one or many):
+For each star you provide:
 
-1. **Prepare the PDS data**: instrumental-systematics masking, optional
+1. **Prepare the PDS data**: instrumental-systematics masking (Kepler only), optional
    binning to a target resolution, low-frequency cut, apodisation...
 2. **Define priors**: empirical scaling relations given the star's νmax (Kallinger et al. 2014)
 3. **Model the background**: run nested sampling ([dynesty](https://dynesty.readthedocs.io)) 
@@ -84,8 +84,9 @@ For each star you provide (one or many):
 | `T` | `harvey3` | three Harvey-like components | ✓ |
 
 All models share a white-noise level, a low-frequency activity term, and (in
-the default Gaussian mode) a Gaussian oscillation envelope. Models are
-**pluggable**: each is a single `BackgroundModel` definition bundling its
+the default Gaussian mode) a Gaussian oscillation envelope. 
+
+Models are **pluggable**: each is a single `BackgroundModel` definition bundling its
 parameters, priors, initial guesses, normalisation, constraints, and plot representation. 
 See [docs/adding_models.md](docs/adding_models.md) for a worked example of registering your own model.
 
@@ -99,11 +100,11 @@ The model-specific radius posteriors and resulting BMA radius posterior outputte
 
 ## Citations
 
-Granalyse is the public merger product between two data analysis frameworks from previous research publications. 
+Granalyse is the public merger product of various data analysis frameworks from previous research publications. 
 If you use Granalyse, please cite the following papers: 
 - [Larsen et al. 2025](https://doi.org/10.1051/0004-6361/202558683)
 - [Larsen et al. 2026a](https://doi.org/10.1051/0004-6361/202555661)
-- [Larsen et al. 2026b](https://doi.org/10.48550/arXiv.2605.26742)
+- [Larsen et al. 2026b](https://doi.org/10.1051/0004-6361/202660096)
 
 ## License
 MIT — see [LICENSE](LICENSE).

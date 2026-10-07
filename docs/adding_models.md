@@ -3,11 +3,11 @@
 Every background model in Granalyse is one `BackgroundModel` instance — the
 pipeline, likelihood, results, radius inference, **and plotting** all interact
 with models only through its fields and hooks. Adding a model means filling in
-one definition and registering it; no other file needs editing.
+one definition and registering it; no other file should need editing.
 
 ## Minimal example
 
-A single-Harvey model with a free white-noise knee, as a user would write it:
+A single-Harvey model with a free white-noise level, as a user would write it:
 
 ```python
 import jax
@@ -68,8 +68,7 @@ MY_MODEL = BackgroundModel(
     ordering_constraint=jax.jit(lambda **kw: 0.0),
     norm_factors=lambda fit: {"a": xi_analytic(fit.fitresults["l"][0])},
     amp_components=("a",),
-    corr_computed=("a", "b"),       # which params follow the Kallinger
-                                    # scaling x scatter in correlated mode
+    corr_computed=("a", "b"),       # which params follow the Kallinger scaling relations (used for correlated inference mode)
     has_radius_relation=False,      # no derived granulation-radius relation
 )
 

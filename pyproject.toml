@@ -23,7 +23,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-calibration = ["cmdstanpy", "arviz"]
+calibration = ["cmdstanpy", "arviz", "h5netcdf", "h5py"]
 dev = ["pytest"]
 
 [project.scripts]

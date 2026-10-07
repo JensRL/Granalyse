@@ -28,9 +28,11 @@ Instructions and setup/
 .vscode/
 .idea/
 
-# Stan compiled binaries
+# Stan compiled binaries (cmdstanpy builds next to the .stan file)
 calibration/**/stan_model
 calibration/**/*.o
+calibration/relation_model
+calibration/*.hpp
 
 # Local Claude Code settings
 .claude/settings.local.json
