@@ -2,7 +2,6 @@
 
 Used by the correlated-inference likelihood (amplitude/timescales computed
 from the sampled numax and a scatter factor) and by the radius pipeline.
-Plain arithmetic, so they work with numpy arrays and inside jax-jitted code.
 """
 
 

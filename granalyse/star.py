@@ -6,13 +6,7 @@ import numpy as np
 
 @dataclass
 class Star:
-    """User-facing description of one star to analyse.
-
-    Either `numax` is given directly, or `logg` and `teff` are given and
-    numax is estimated from the asteroseismic scaling relation (see data.calc_numax).
-    `teff` and `feh` (with uncertainties) are additionally required for
-    radius inference; `mission` selects the bolometric correction.
-    """
+    """User-facing description of one star to analyse."""
 
     name: str
     pds_file: str
@@ -24,6 +18,8 @@ class Star:
     feh_err: float | None = None
     mission: str = "Kepler"  # 'Kepler' or 'TESS'
     nyquist: float | None = None  # muHz; defaults per mission if None
+    bin_resolution: float | str = "auto"            # muHz; "auto" = run configuration
+    low_frequency_cut: float | str | None = "auto"  # muHz; None = no cut
 
     def __post_init__(self):
         if self.numax is None and (self.logg is None or self.teff is None):

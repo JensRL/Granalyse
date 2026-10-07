@@ -2,24 +2,24 @@
 // ===================
 // Hierarchical Stan model for deriving granulation-radius scaling relations.
 //
-// Regression (all quantities in relative log space, normalised to Perky):
+// Regression (all quantities in relative log space, normalised to the reference star):
 //   log10(R_rel) = fac + x*log10(A_gran_rel) + y*log10(charb_rel)
-//                      + z*log10(Teff_rel) + z2*(feh - feh_Perky)
+//                      + z*log10(Teff_rel) + z2*(feh - feh_ref)
 //
-// This is the Gaussian measurement-error variant used for the published
-// seed-42 relations.  
+// This is the Gaussian measurement-error variant used for both shipped
+// relation sets (ms_sgb and rgb).
 //
 
 data {
     int<lower = 0> N;
-    vector[N] lg_amp_obs;            // observed log10(A_gran) [relative to Perky]
-    vector[N] lg_charb_obs;          // observed log10(charb)  [relative to Perky]
+    vector[N] lg_amp_obs;            // observed log10(A_gran) [relative to reference star]
+    vector[N] lg_charb_obs;          // observed log10(charb)  [relative to reference star]
     array[N] matrix[2, 2] gran_cov;  // 2x2 covariance for each star [lg_amp, lg_charb]
-    vector[N] lg_teff_obs;           // observed log10(Teff)   [relative to Perky]
+    vector[N] lg_teff_obs;           // observed log10(Teff)   [relative to reference star]
     vector<lower=0>[N] lg_teff_err;  // uncertainty in log10(Teff)
-    vector[N] lg_R_obs;              // observed log10(R)       [relative to Perky]
+    vector[N] lg_R_obs;              // observed log10(R)       [relative to reference star]
     vector<lower=0>[N] lg_R_err;     // uncertainty in log10(R)
-    vector[N] feh_obs;               // [Fe/H] offset from Perky (0 if not observed)
+    vector[N] feh_obs;               // [Fe/H] offset from reference star (0 if not observed)
     array[N] int<lower=0, upper=1> has_feh_obs;  // 1 if star has Fe/H observation
 }
 parameters {

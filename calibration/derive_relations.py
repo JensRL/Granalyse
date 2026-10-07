@@ -17,7 +17,7 @@ Usage
         --output-dir ./my_calibration \\
         --dry-run
 
-    # Normalise against your own reference star instead of Perky
+    # Normalise against another reference star than Perky (the MS/SGB default)
     python calibration/derive_relations.py sample.csv \\
         --results-dir /path/to/results \\
         --model H \\
@@ -35,9 +35,13 @@ sample.csv columns (required)
 
 Output
 ------
-    <output-dir>/relation_coefficients_<MODEL>_seeduser.csv
+    <output-dir>/relation_coefficients_<MODEL>.csv
         Columns: fac, x, y, z, z2, sigma
-        Directly loadable by granalyse.radius.load_relation_coefficients(seed='user').
+
+    <output-dir>/reference_star.json
+        The reference star the coefficients were derived against. Together
+        with the coefficients this makes <output-dir> a relation set, usable
+        through the `relations` config key or granalyse.radius.load_relations.
 
     <output-dir>/fit_data_<MODEL>_user.csv
         The same coefficient draws plus chain/draw indices and the per-draw
@@ -88,9 +92,9 @@ R_SUN_CM = 6.957e10  # cm
 def load_reference_params(path=None, model=None):
     """Reference-star parameters used to normalise observables into relative space.
 
-    With `path` given, read that JSON; otherwise fall back to the shipped Perky
-    (KIC 6106415) parameters. The file must follow the same layout as
-    granalyse/radius/relations/perky_params.json:
+    With `path` given, read that JSON; otherwise fall back to Perky
+    (KIC 6106415), the reference of the shipped MS/SGB relations. The file must
+    follow the layout of granalyse/radius/relations/<set>/reference_star.json:
 
         {"name": ..., "teff": K, "R_cm": cm, "feh": dex,
          "models": {"H": {"amp": ppm, "charb": muHz}, ...}}
@@ -99,8 +103,8 @@ def load_reference_params(path=None, model=None):
     i.e. be the posterior median of the mission-corrected A_gran.
     """
     if path is None:
-        from granalyse.radius import load_perky_params
-        return load_perky_params()
+        from granalyse.radius import load_reference_star
+        return load_reference_star("ms_sgb")
 
     with open(path) as f:
         ref = json.load(f)
@@ -117,6 +121,28 @@ def load_reference_params(path=None, model=None):
                 f"{path}: model {model} missing key(s) {sorted(sub_missing)}"
             )
     return ref
+
+
+def save_reference(reference, output_dir, model):
+    """Write the reference star next to the coefficients, so that output_dir
+    is a complete relation set. Refuses to mix reference stars in one set."""
+    path = Path(output_dir) / "reference_star.json"
+    if path.exists():
+        with open(path) as f:
+            existing = json.load(f)
+        same_star = all(existing.get(k) == reference[k] for k in ("teff", "R_cm", "feh"))
+        same_model = existing["models"].get(model, reference["models"][model]) \
+            == reference["models"][model]
+        if not (same_star and same_model):
+            raise ValueError(
+                f"{path} holds a different reference star. Relations derived "
+                "against different references cannot share a relation set; "
+                "use another --output-dir.")
+        existing["models"][model] = reference["models"][model]
+        reference = existing
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(reference, f, indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -439,8 +465,8 @@ def save_outputs(fit, model, output_dir, diagnostics=None, save_latent=False):
 
     Files written
     -------------
-    relation_coefficients_<MODEL>_seeduser.csv
-        fac, x, y, z, z2, sigma — one row per draw. 
+    relation_coefficients_<MODEL>.csv
+        fac, x, y, z, z2, sigma — one row per draw.
     fit_data_<MODEL>_user.csv
         The same coefficient draws plus chain/draw indices and the per-draw
         sampler diagnostics (lp__, accept_stat__, stepsize__, treedepth__,
@@ -464,7 +490,7 @@ def save_outputs(fit, model, output_dir, diagnostics=None, save_latent=False):
 
     # ── 1. coefficient draws ───────────────────────────────────────────────
     coeffs_df = fit.draws_pd(vars=coeff_cols)
-    coeff_path = output_dir / f"relation_coefficients_{model}_seeduser.csv"
+    coeff_path = output_dir / f"relation_coefficients_{model}.csv"
     coeffs_df.to_csv(coeff_path, index=False)
     print(f"\nCoefficient draws saved to {coeff_path}  "
           f"({len(coeffs_df)} draws)")
@@ -579,9 +605,10 @@ def main(argv=None):
     parser.add_argument(
         "--reference-json", default=None,
         help="JSON with the reference star used to normalise into relative "
-             "space (same layout as granalyse/radius/relations/perky_params.json). "
-             "Defaults to the shipped Perky (KIC 6106415) parameters. Whatever "
-             "is used here must also be used when applying the relations.",
+             "space (layout of granalyse/radius/relations/<set>/reference_star.json). "
+             "Defaults to Perky (KIC 6106415), the MS/SGB reference. It is "
+             "copied to the output directory, which then holds a complete "
+             "relation set.",
     )
     parser.add_argument(
         "--chains", type=int, default=4,
@@ -636,7 +663,7 @@ def main(argv=None):
 
     # Load the reference star used for relative-space normalisation
     reference = load_reference_params(args.reference_json, model=args.model)
-    ref_name = reference.get("name", "Perky (KIC 6106415)")
+    ref_name = reference.get("name", "star")
     print(f"  Reference {ref_name}: Teff={reference['teff']} K  "
           f"R={reference['R_cm']/R_SUN_CM:.4f} R_sun  "
           f"[Fe/H]={reference['feh']}")
@@ -668,6 +695,9 @@ def main(argv=None):
                   f"range=[{arr.min():.4g}, {arr.max():.4g}]")
         print("\nDry run complete. Stan sampling skipped.")
         return 0
+
+    # Written before sampling, so a mismatched --output-dir fails immediately
+    save_reference(reference, args.output_dir, args.model)
 
     # Run Stan
     fit, diagnostics = run_stan(

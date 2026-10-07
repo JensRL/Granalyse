@@ -33,4 +33,4 @@ granalyse = "granalyse.cli:main"
 include = ["granalyse*"]
 
 [tool.setuptools.package-data]
-"granalyse.radius.relations" = ["*.csv", "*.json"]
+"granalyse.radius" = ["relations/*/*.csv", "relations/*/*.json"]

@@ -14,7 +14,7 @@ from . import data as gdata
 from .models import get_model
 from .plotting import present_fit, prior_predictive_PDS, radius_posterior_plot
 from .priors import set_priors
-from .radius import infer_radius
+from .radius import infer_radius, select_relations
 from .results import compute_normalised_amplitudes, save_fit_params, save_run_output
 from .sampling import run_fit
 from .star import FitCase
@@ -60,6 +60,24 @@ def _star_numax(star):
     if star.numax is not None:
         return float(star.numax)
     return float(gdata.calc_numax(star.logg, star.teff))
+
+
+# Data preparation for settings left at "auto": as each shipped relation set
+# was calibrated, i.e. giants without a low-frequency cut, MS/SGB stars with one.
+AUTO_DATA_SETTINGS = {
+    "rgb": {"bin_resolution": 0.05, "low_frequency_cut": None},
+    "ms_sgb": {"bin_resolution": 0.5, "low_frequency_cut": 10.0},
+}
+
+
+def data_settings(star, cfg):
+    """(bin_resolution, low_frequency_cut) [muHz] for a star"""
+    auto = AUTO_DATA_SETTINGS[select_relations(
+        _star_numax(star), cfg.relation_numax_split, warn=False)]
+    res = star.bin_resolution if star.bin_resolution != "auto" else cfg.bin_resolution
+    cut = star.low_frequency_cut if star.low_frequency_cut != "auto" else cfg.low_frequency_cut
+    return (auto["bin_resolution"] if res == "auto" else res,
+            auto["low_frequency_cut"] if cut == "auto" else cut)
 
 
 def _assign_paths(fit, star_name, model, cfg):
@@ -110,15 +128,15 @@ def prepare_star_data(star, cfg):
     fit.mission = star.mission
 
     # Data preparation chain (identical across models)
+    bin_resolution, low_frequency_cut = data_settings(star, cfg)
     freq, power = gdata.read_data(fit)
     fit.nyquist = star.nyquist if star.nyquist is not None else freq[-1]
     if kind == "star":
         # Kepler/TESS instrumental systematics; not present in simulations
         power, _ = gdata.mask_systematics(freq, power, fit.numax)
     freq, power, _ = gdata.process_binning(freq, power, fit, cfg.bin_data,
-                                           cfg.bin_resolution, cfg.bin_visuals)
-    freq, power, _ = gdata.cut_low_frequencies(freq, power, fit,
-                                               cfg.low_frequency_cut)
+                                           bin_resolution, cfg.bin_visuals)
+    freq, power, _ = gdata.cut_low_frequencies(freq, power, fit, low_frequency_cut)
     fit.freq, fit.power = freq, power
     fit.eta = gdata.calc_eta(fit)
     return fit
@@ -127,8 +145,6 @@ def prepare_star_data(star, cfg):
 def prepare_fit_case(star, model_name, cfg, star_data=None):
     """
     Build a fully prepared FitCase (data, parameters, priors, paths).
-    If star_data (a FitCase from prepare_star_data) is given, the prepared
-    spectrum is reused, avoiding a redundant read/bin per model
     """
     model = get_model(model_name)
     if star_data is None:
@@ -221,13 +237,12 @@ def run_single_fit(fit, model=None, make_plots=True, skip_replot=False):
 
     if do_plots:
         present_fit(fit, model)
+        print("Diagnostic figures and posterior results saved successfully")
     return fit, evidence, evidence_err
 
 
 def run_star(star, cfg):
-    """Run all configured models for one star, then radius inference.
-    Returns a summary dict (also written to the star's output directory).
-    Terminal output is mirrored to <star_dir>/run.log."""
+    """Run all configured models for one star, then radius inference."""
     star_dir = os.path.join(cfg.output_dir, star.name)
     with tee_stdout(os.path.join(star_dir, "run.log")):
         return _run_star_logged(star, cfg, star_dir)
@@ -295,6 +310,12 @@ def _run_star_logged(star, cfg, star_dir):
         if rel_models:
             print("-" * 70)
             print(f"  Radius inference for {star.name}")
+            # MS/SGB or RGB relations from the input numax; own sets replace shipped ones
+            numax = _star_numax(star)
+            rel_set = select_relations(numax, cfg.relation_numax_split)
+            source = cfg.relations.get(rel_set, "shipped")
+            own = f" ({source})" if rel_set in cfg.relations else ""
+            print(f"  Relations: {rel_set}{own}, numax = {numax:.4g} muHz")
             radius = infer_radius(
                 star.name,
                 posteriors=rel_models,
@@ -302,8 +323,11 @@ def _run_star_logged(star, cfg, star_dir):
                 teff=star.teff, teff_err=star.teff_err,
                 feh=star.feh, feh_err=star.feh_err,
                 mission=star.mission,
+                relations=cfg.relations.get(rel_set, rel_set),
             )
             summary["radius"] = {
+                "relations": rel_set,
+                "relations_source": source,
                 "R_combined": radius["R_combined"],
                 "R_16": radius["R_16_combined"],
                 "R_84": radius["R_84_combined"],
@@ -320,7 +344,7 @@ def _run_star_logged(star, cfg, star_dir):
             )
             radius_fig = os.path.join(star_dir, "RadiusPosteriors.pdf")
             if cfg.skip_replot and os.path.exists(radius_fig):
-                print(f"{star.name}: skip_replot -- reusing existing RadiusPosteriors.pdf")
+                print(f"{star.name}: skip_replot -- reusing existing figure...")
             else:
                 radius_posterior_plot(radius, radius_fig)
         else:
@@ -334,8 +358,7 @@ def _run_star_logged(star, cfg, star_dir):
 
 
 def run_pipeline(cfg):
-    """Run the full pipeline for all stars in the configuration; writes a
-    per-star summary.json and an overview CSV in the output directory."""
+    """Run the full pipeline for all stars in the configuration"""
     rows = []
     summaries = []
     for star in cfg.stars:
@@ -345,6 +368,7 @@ def run_pipeline(cfg):
         for m, res in summary["models"].items():
             row[f"logZ_{m}"] = res["log_evidence"]
         if "radius" in summary:
+            row["relations"] = summary["radius"]["relations"]
             row["R_combined"] = summary["radius"]["R_combined"]
             row["R_16"] = summary["radius"]["R_16"]
             row["R_84"] = summary["radius"]["R_84"]

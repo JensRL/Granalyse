@@ -1,11 +1,11 @@
 """Radius inference from granulation posteriors via the derived
 granulation-radius scaling relations, with Bayesian Model Averaging.
 
-The relation is applied in space relative to the reference star Perky
-(scaling relations from arXiv:2605.26742):
+The relation is applied in space relative to the reference star of the
+chosen relation set (see loader.py):
 
   log10(R_rel) = fac + y*log10(charb_rel) + x*log10(A_gran_rel)
-               + z*log10(Teff_rel) + z2*(feh - feh_Perky) + sigma*eps
+               + z*log10(Teff_rel) + z2*(feh - feh_ref) + sigma*eps
 
 Random draws use the global numpy RNG; seed with np.random.seed() for
 reproducibility.
@@ -14,7 +14,7 @@ reproducibility.
 import numpy as np
 
 from ..models import get_model
-from .loader import load_perky_params, load_relation_coefficients
+from .loader import load_relations
 
 R_SUN = 6.957e10  # cm
 
@@ -59,7 +59,7 @@ def transform_posterior_to_observables(posterior_df, teff, model,
 
 
 def predict_radius_direct(charbs_rel, amps_rel, teffs_rel, fehs_rel,
-                          coeffs, perky_ref):
+                          coeffs, reference):
     """Apply the scaling relation in relative space; returns radii in R_sun."""
     lg_R_rel = (coeffs["fac"]
                 + coeffs["y"] * np.log10(charbs_rel)
@@ -67,7 +67,7 @@ def predict_radius_direct(charbs_rel, amps_rel, teffs_rel, fehs_rel,
                 + coeffs["z"] * np.log10(teffs_rel)
                 + coeffs["z2"] * fehs_rel
                 + coeffs["sigma"] * np.random.randn(len(coeffs["sigma"])))
-    R_cm = (10 ** lg_R_rel) * perky_ref["R_cm"]
+    R_cm = (10 ** lg_R_rel) * reference["R_cm"]
     return R_cm / R_SUN
 
 
@@ -102,8 +102,7 @@ def combine_radius_posteriors(radius_samples, weights):
 
 
 def infer_radius(star_name, posteriors, evidences, teff, teff_err,
-                 feh=None, feh_err=None, mission="Kepler",
-                 scaling_coeffs=None, n_samples=None, perky_ref=None,
+                 feh=None, feh_err=None, mission="Kepler", relations="ms_sgb",
                  feh_prior_mean=-0.10, feh_prior_std=0.40):
     """BMA radius inference for one star.
 
@@ -115,16 +114,17 @@ def infer_radius(star_name, posteriors, evidences, teff, teff_err,
     feh, feh_err   : optional [Fe/H] and uncertainty; without feh a
         population prior N(feh_prior_mean, feh_prior_std) is used.
     mission : 'Kepler' or 'TESS' (bolometric correction)
-    scaling_coeffs, n_samples : as from load_relation_coefficients();
-        loaded from the shipped seed-42 files when None.
-    perky_ref : as from load_perky_params(); loaded when None.
+    relations : relation set as from load_relations(), or the shipped set
+        name / directory to load it from. The pipeline chooses it from numax
+        (select_relations).
 
     Returns a dict with combined and per-model radius summaries and samples.
     """
-    if scaling_coeffs is None or n_samples is None:
-        scaling_coeffs, n_samples = load_relation_coefficients()
-    if perky_ref is None:
-        perky_ref = load_perky_params()
+    if not isinstance(relations, dict):
+        relations = load_relations(relations)
+    scaling_coeffs = relations["coeffs"]
+    n_samples = relations["n_samples"]
+    reference = relations["reference"]
 
     has_feh = (feh is not None) and not np.isnan(float(feh))
     teff_lo, teff_hi = parse_err(teff_err)
@@ -168,13 +168,13 @@ def infer_radius(star_name, posteriors, evidences, teff, teff_err,
             fehs = np.clip(feh_prior_mean + feh_prior_std * np.random.randn(n_sr),
                            -4.0, 1.0)
 
-        charbs_rel = charbs / perky_ref["models"][model]["charb"]
-        amps_rel = amps / perky_ref["models"][model]["amp"]
-        teffs_rel = teffs / perky_ref["teff"]
-        fehs_rel = fehs - perky_ref["feh"]
+        charbs_rel = charbs / reference["models"][model]["charb"]
+        amps_rel = amps / reference["models"][model]["amp"]
+        teffs_rel = teffs / reference["teff"]
+        fehs_rel = fehs - reference["feh"]
 
         Rs = predict_radius_direct(charbs_rel, amps_rel, teffs_rel, fehs_rel,
-                                   scaling_coeffs[model], perky_ref)
+                                   scaling_coeffs[model], reference)
 
         radius_samples[model] = Rs
         evidences_used[model] = [log_ev, 0.0]
@@ -206,6 +206,7 @@ def infer_radius(star_name, posteriors, evidences, teff, teff_err,
 
     return {
         "star_name": star_name,
+        "relations": relations["name"],
         "R_combined": R_med,
         "R_16_combined": R_16,
         "R_84_combined": R_84,

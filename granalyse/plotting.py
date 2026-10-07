@@ -25,6 +25,10 @@ plt.rcParams["agg.path.chunksize"] = 20000
 _CORNER_RASTER_ZORDER = 10
 _CORNER_RASTER_DPI = 150
 
+# PDS figure y-range constraints
+_PDS_COMPONENT_MARGIN_DEX = 0.5
+_PDS_DATA_MAX_FRACTION = 0.75
+
 
 def _save_corner(fig, path):
     """Save a corner figure with its dense contour/scatter layers rasterised
@@ -299,14 +303,9 @@ def present_fit(fit, model=None):
     if fit.bin_data:
         freq_raw = fit.freq_raw
         power_raw = fit.power_raw
-        # Raw points below the fitted range are context only -- a low-frequency
-        # cut excluded them -- so draw those faintly and the rest darker. With
-        # no cut the fitted range starts at the first bin, so there is no such
-        # region; splitting then leaves a stray 1-3 point faint stub
-        # disconnected from the spectrum, so draw the raw as a single line.
+        #Avoid thin grey lines when plotting
         split = int(np.searchsorted(freq_raw, np.min(freq)))
         if fit.freq_removed is not None and split > 1:
-            # Share the boundary sample so the two segments join (no gap).
             ax1.plot(freq_raw[:split + 1], power_raw[:split + 1],
                      color="grey", alpha=0.4, linewidth=0.5, label="Raw PDS",
                      rasterized=True)
@@ -324,11 +323,6 @@ def present_fit(fit, model=None):
         ax1.plot(freq, power, color="grey", alpha=0.8, linewidth=0.5,
                  label="Fitted Raw PDS", rasterized=True)
         if fit.likelihood not in {"mixture"}:
-            # The visual binning spans the full (pre-cut) spectrum. When a
-            # low-frequency cut was applied, drop the bins below the fitted
-            # range so the binned curve starts where the fit does; with no cut
-            # the whole binned curve is valid -- keep it all rather than
-            # clipping the first bin into a stray stub.
             if fit.freq_removed is not None:
                 keep = freq_binned >= np.min(freq)
                 freq_b, power_b = freq_binned[keep], power_binned[keep]
@@ -340,7 +334,7 @@ def present_fit(fit, model=None):
 
     if fit.likelihood in {"mixture"}:
         sigmoid = fit.sigmoid
-        # Ensure binned arrays are available (may not be set when bin_data=True)
+        # Ensure binned arrays are available 
         if "freq_binned" not in dir() or freq_binned is None:
             freq_binned = fit.freq_binned if hasattr(fit, "freq_binned") else None
             power_binned = fit.power_binned if hasattr(fit, "power_binned") else None
@@ -505,8 +499,6 @@ def present_fit(fit, model=None):
                      "r", linewidth=0.5, alpha=0.2, rasterized=True)
 
     # ---- Granulation components (delegated to the model object) ----
-    # Each model draws its own components (generic Harvey profiles by default)
-    # and returns floor levels for the y-limit adjustment below.
     component_levels = model.draw_pds_components(ax1, freq, fit.eta,
                                                  median_p, np.max(power))
 
@@ -633,18 +625,16 @@ def present_fit(fit, model=None):
         lower_ylim = np.min(fit.power_binned) - 0.3 * np.min(fit.power_binned)
         data_max = np.max(fit.power_binned)
 
-    # Ensure faint components are visible
+    # Ensure components are visible
     for comp_amp in component_levels:
-        if comp_amp < lower_ylim:
-            lower_ylim = comp_amp - 0.6 * comp_amp
+        lower_ylim = min(lower_ylim, comp_amp / 10**_PDS_COMPONENT_MARGIN_DEX)
 
     if lower_ylim < 1e-3 and fit.data_format == "STAR":
         lower_ylim = 1e-3
 
-    # Place data_max at 75 % of the log axis height
     log_lo = np.log10(max(lower_ylim, 1e-10))
     log_peak = np.log10(max(data_max, lower_ylim * 10))
-    upper_ylim = 10 ** (log_lo + (log_peak - log_lo) / 0.75)
+    upper_ylim = 10 ** (log_lo + (log_peak - log_lo) / _PDS_DATA_MAX_FRACTION)
 
     ax1.set_ylim(lower_ylim, upper_ylim)
 
@@ -677,7 +667,6 @@ def present_fit(fit, model=None):
         )
         _save_corner(cornerfig, fit.Cornerfigname)
         plt.close(cornerfig)
-        print("Posterior corner plot saved successfully")
     except ValueError as e:
         print(f"WARNING: Failed to create posterior corner plot for {fit.name}")
         print(f"  Error: {e}")
@@ -762,7 +751,6 @@ def present_fit(fit, model=None):
             )
 
         _save_corner(corner2, fit.PriorPostCornerfigname)
-        print("Prior/Posterior corner plot saved")
         plt.close(corner2)
 
     except ValueError as e:
@@ -776,8 +764,7 @@ def present_fit(fit, model=None):
         try:
             corrfig = plt.figure(figsize=(12, 10), dpi=300)
             numax_samples = fit.fitdata["numax_fit"].values
-            # Reconstruct the physical granulation samples this model derives
-            # from its scatter parameters (model D has no d, for example)
+            # Reconstruct the physical granulation samples from scatter parameters
             gran_funcs = {"a": gran_a, "b": gran_b, "d": gran_d}
             units = {"a": "ppm", "b": r"$\mu$Hz", "d": r"$\mu$Hz"}
             cols = [numax_samples]
@@ -812,7 +799,6 @@ def present_fit(fit, model=None):
             # Filename: Cornerfigname with _corrparams suffix
             plotname = fit.Cornerfigname.replace(".pdf", "_corrparams.pdf")
             _save_corner(corrfig, plotname)
-            print("Correlated inference corner plot saved")
             plt.close(corrfig)
         except ValueError as e:
             print(f"WARNING: Failed to create correlated inference corner plot for {fit.name}")

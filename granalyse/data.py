@@ -69,10 +69,7 @@ dnu_sun = 135.1    # µHz
 # ---------------------------------------------------------------------------
 
 def read_data(fit_class):
-    """Load PDS from file and return (freq, power) arrays.
-
-    The file path is taken from ``fit_class.PDSfile``.
-    """
+    """Load PDS from file and return (freq, power) arrays."""
     with open(fit_class.PDSfile, 'r') as f:
         PDS = np.genfromtxt(f)
     freq = PDS[:, 0]   # µHz
@@ -364,10 +361,8 @@ def mask_systematics(freq, power, numax, sys_dict=SC_sys_peaks,
 
 
 def bin_to_res_fixed_count(freq, power, version, resolution_muHz=0.5, verbose=True):
-    """Bin PDS so every output bin contains exactly s_int points.
-
-    s_int is chosen to give achieved resolution closest to the requested
-    resolution, while never going below 0.3 µHz (for Peakbogging mode).
+    """Bin PDS so every output bin contains exactly s_int points. s_int is chosen to give 
+    achieved resolution closest to the requested resolution
 
     Returns
     -------

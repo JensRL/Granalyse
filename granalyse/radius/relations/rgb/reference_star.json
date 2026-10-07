@@ -1,0 +1,28 @@
+{
+  "name": "KIC 7125569",
+  "description": "Reference star of the red-giant-branch (RGB) granulation-radius relations (Larsen et al. in prep.).",
+  "teff": 4643.5527,
+  "teff_err": 43.1809,
+  "R_cm": 646799247000.0,
+  "R_sun": 9.2971,
+  "R_err_sun": 0.1738,
+  "feh": -0.2206,
+  "feh_err": 0.058,
+  "R_sun_cm": 69570000000.0,
+  "teff_sun": 5777,
+  "models": {
+    "J": {
+      "amp": 441.6536269001163,
+      "charb": 11.482322395344038
+    },
+    "H": {
+      "amp": 449.81546747639493,
+      "charb": 12.04634743799455
+    },
+    "T": {
+      "amp": 456.21161123806246,
+      "charb": 12.144699815873114
+    }
+  },
+  "provenance": "Stan MCMC draws from calibration/derive_relations.py (4 chains x 2000 draws) on 4000 Kepler RGB stars with numax > 2.5 muHz. Teff, [Fe/H] and radius of the reference star from APOKASC-3 (Pinsonneault et al. 2025); amp/charb are posterior medians of its own Kepler-bolometric-corrected granulation observables."
+}

@@ -2,8 +2,8 @@
 
 This directory is a **self-contained optional component** that lets you
 re-derive the granulation-radius relation coefficients from your own
-sample of stars with known radii, instead of using the coefficients shipped
-with `granalyse`.
+sample of stars with known radii, instead of using the MS/SGB and RGB
+relation sets shipped with `granalyse`.
 
 ---
 
@@ -14,9 +14,9 @@ For each star in your sample it:
 1. Finds the granalyse nested-sampling posteriors under `<results-dir>/<name>/model_<MODEL>_*/FitData_model_<MODEL>.csv`.
 2. Transforms the raw posteriors to physical `(charb [μHz], A_gran [ppm])`.
 3. Computes the **per-star posterior median of log₁₀(A_gran) and log₁₀(charb)** and their **2×2 covariance matrix**`.
-4. Normalises all quantities to **relative space** (divided by the Perky reference star KIC 6106415).
+4. Normalises all quantities to **relative space** (divided by a reference star; Perky, KIC 6106415, by default).
 5. Assembles the Stan data dict and runs a **hierarchical Stan regression**.
-6. Saves the coefficient draws.
+6. Saves the coefficient draws together with the reference star, as a relation set.
 
 The regression model may be seen in `relation_model.stan`
 
@@ -71,7 +71,8 @@ All flags: `--model {H,J,T}`, `--mission {Kepler,TESS}`, `--output-dir`,
 
 Step 4 normalises everything to Perky (KIC 6106415), a main-sequence star.
 A calibration sample far from it — giants, say — is better anchored on a
-reference drawn from that sample. Pass one with `--reference-json`:
+reference drawn from that sample. Pass one with `--reference-json`, e.g. the
+reference of the shipped RGB set, `granalyse/radius/relations/rgb/reference_star.json`:
 
 ```json
 {
@@ -89,10 +90,10 @@ mission-corrected `A_gran` [ppm] and `charb` [μHz] — the medians of
 its `FitData_model_<MODEL>.csv`. Only the models you derive need entries.
 
 The reference enters the regression as a fixed constant, not a marginalised
-quantity, so choose a star whose own fit is well determined. **Whatever you
-derive with you must also apply with**: pass the same file as `perky_ref` to
-`granalyse.radius.infer_radius`. Coefficients and reference star are
-meaningless apart.
+quantity, so choose a star whose own fit is well determined. Coefficients and
+reference star are meaningless apart, so the reference is copied into
+`--output-dir` next to the coefficients, and the script refuses to mix
+reference stars in one output directory.
 
 Omit the flag and the shipped Perky parameters are used, unchanged.
 
@@ -102,7 +103,8 @@ Omit the flag and the shipped Perky parameters are used, unchanged.
 
 | File | Description |
 |------|-------------|
-| `relation_coefficients_<MODEL>_seeduser.csv` | Coefficient draws (fac, x, y, z, z2, sigma) |
+| `relation_coefficients_<MODEL>.csv` | Coefficient draws (fac, x, y, z, z2, sigma) |
+| `reference_star.json` | The reference star the coefficients were derived against |
 | `fit_data_<MODEL>_user.csv` | The same draws + chain/draw indices + per-draw sampler diagnostics |
 | `fit_summary_<MODEL>_user.csv` | Coefficient mean, sd, intervals, MCSE, ESS, R-hat |
 | `fit_diagnostics_<MODEL>_user.txt` | CmdStan `diagnose()` report |
@@ -113,19 +115,29 @@ The model samples **5N+6** parameters — five latent parameters per star plus t
 six coefficients. At N = 4 000 that is 20 006, so the latent parameters dominate
 anything written and are excluded by default; `--save-latent` includes them.
 Nothing downstream needs them: the radius inference reads only
-`relation_coefficients_<MODEL>_seeduser.csv`.
+`relation_coefficients_<MODEL>.csv` and `reference_star.json`.
 
 Writing the netCDF needs a netCDF backend, which arviz does not declare;
 `h5netcdf` and `h5py` are therefore part of the `calibration` extra. If they are
 missing the file is skipped with a warning rather than failing the run —
 `fit_data_<MODEL>_user.csv` carries the same draws.
 
-### Loading user coefficients with granalyse
+### Using your relations in granalyse
 
-The output filename follows the loader convention
-`relation_coefficients_{model}_seed{seed}.csv` with `seed='user'`.  Copy the
-file into `granalyse/radius/relations/` and load with
-`load_relation_coefficients(seed='user')`, or load it manually with pandas.
+The output directory is a relation set, laid out like the shipped ones in
+`granalyse/radius/relations/`. Point the run configuration at it to replace a
+shipped set:
+
+```yaml
+relations:
+  rgb: ./my_calibration    # replaces the shipped RGB set; ms_sgb is kept
+```
+
+Stars are still matched to `ms_sgb` or `rgb` by νmax (split at
+`relation_numax_split`, default 283.2 µHz); list both to use your own
+relations for every star. Derive every model you fit: a model missing from the
+set is left out of the BMA with a warning. From Python, pass the directory as
+`relations=` to `granalyse.radius.infer_radius`.
 
 ---
 
@@ -148,7 +160,7 @@ large samples prefer a lower `--iterations` over the default.
 
 `relation_model.stan` contains the **Gaussian measurement-error** variant
 (`lin_code_feh_gaussian` from GranRadRels/pystan_helpers.py), which was used
-for the published seed-42 relations.
+for both shipped relation sets.
 
 A **Student-t** variant (`lin_code_feh_studentt`) also exists in the original
 file.  It adds a degrees-of-freedom parameter `nu ~ gamma(2, 0.1)` and uses
@@ -157,24 +169,26 @@ ported here but can be added by copying the string from pystan_helpers.py.
 
 ---
 
-## Differences from the published derivation
+## How the shipped sets were derived
 
-1. **No multi-seed drawing** — the published workflow uses 50 independent
-   random draws of 50% of the calibration pool and averages the resulting
-   coefficients (`run_seed_ensemble.py`).  This script performs a single fit
-   on the entire sample you provide.
+**`rgb`** (Larsen et al. in prep.) was derived with this script as it stands:
+4 000 Kepler RGB stars with νmax > 2.5 µHz (2 000 each with APOKASC-3 and
+Yu et al. 2018 parameters, drawn at random), normalised to KIC 7125569, run
+with `--iterations 3000`.
 
-2. **No source stratification** — the published pool stratifies across Legacy,
-   KAGES, APOKASC1, seismic, and interferometric sub-samples.  User-supplied
-   samples are taken as-is.
+**`ms_sgb`** (Larsen et al. 2026b) differs from what this script does:
 
-3. **RGB exclusion left to the user** — stars with R > 5 R☉ are excluded in
-   the published derivation.  Filter your sample before passing it in.
+1. **Multi-seed drawing** — 50 independent random draws of 50% of the
+   calibration pool, with the resulting coefficients averaged
+   (`run_seed_ensemble.py`). This script performs a single fit on the entire
+   sample you provide.
+2. **Source stratification** — the pool was stratified across Legacy, KAGES,
+   APOKASC1, seismic, and interferometric sub-samples. User-supplied samples
+   are taken as-is.
+3. **Giant exclusion** — stars with R > 5 R☉ were excluded. Filter your
+   sample before passing it in.
 
-4. **The reference star is included if present** — the normalisation anchor
-   (Perky by default, or whatever `--reference-json` supplies) will be used as
-   a data point if it appears in your sample, unlike the published workflow
-   which excludes it.  Remove it manually if needed.
-
-5. **Single mission** — use `--mission TESS` for TESS targets; the published
-   calibration used Kepler `bol_ref=5934 K, bol_exp=0.80`.
+Both sets keep their reference star out of the calibration sample. This
+script uses it as a data point if it appears in your sample, so remove it
+manually if needed. Both were derived for Kepler (`bol_ref=5934 K,
+bol_exp=0.80`); use `--mission TESS` for TESS targets.

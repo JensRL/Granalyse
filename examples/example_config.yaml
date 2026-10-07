@@ -14,30 +14,34 @@ correlated_inference: true     # granulation params via Kallinger scaling + scat
 
 binning:
   enabled: true
-  resolution: 0.5              # target bin resolution [muHz]
+  resolution: auto             # target bin resolution [muHz] -- automatic selection based on numax or specified value
   visual_bins: 10              # plot-only binning; used for visualization when binning.enabled is false
 
-low_frequency_cut: 10          # discard data below this frequency [muHz]; null to keep
+low_frequency_cut: auto        # discard data below this frequency [muHz]; 
+                               # auto to select based on numax and null to keep all data 
 
 sampling:
-  nlive_factor: null           # multiply default number of livepoints used by dynesty; null = default
+  nlive_factor: null           # multiply default number of livepoints used by dynesty
   seed: null                   # RNG seed for reproducible sampling 
 
-radius_inference: true         # requires teff (and ideally feh) per star
+radius_inference: true         # Enable or disable granulation-based radius inference
 
 skip_replot: false             # on resume, reuse existing figures instead of
                                # remaking them (much faster for stopped runs)
 
 stars:
   # Give numax directly...
-  - name: KIC8006161
-    pds_file: examples/example_data/kplr008006161_kasoc-psd_slc_v1.pow
-    numax: 3575
-    teff: 5488
-    teff_err: 77
-    feh: 0.34
-    feh_err: 0.1
+  # (LEGACY main-sequence star; numax, Teff and [Fe/H] from Sayeed et al. 2025)
+  - name: KIC9098294
+    pds_file: examples/example_data/kplr009098294_kasoc-psd_slc_v1.pow
+    numax: 2327
+    teff: 5906
+    teff_err: 113
+    feh: -0.11
+    feh_err: 0.2
     mission: Kepler
+    # bin_resolution: 0.5        # optional per-star overrides [muHz]
+    # low_frequency_cut: null
 
   # ...or give logg + teff and let the numax scaling relation estimate it.
   # Simulations (kind: simulation) skip the instrumental-systematics masking.

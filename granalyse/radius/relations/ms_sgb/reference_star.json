@@ -1,5 +1,6 @@
 {
-  "description": "Reference star Perky (KIC 6106415) used to normalise observables into relative space; from GranRadRels helpers.get_perky_params().",
+  "name": "Perky (KIC 6106415)",
+  "description": "Reference star of the main-sequence and subgiant (MS/SGB) granulation-radius relations (Larsen et al. 2026b, arXiv:2605.26742).",
   "teff": 5721.95,
   "R_cm": 84426228760.82578,
   "feh": -0.04,

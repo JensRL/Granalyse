@@ -2,9 +2,7 @@
 Config-file generator: `granalyse make-config`.
 
 Builds a human-readable YAML scaffold from a CSV/TSV star table and a directory
-of PDS files  The emitted file is valid input for load_config when
-all required fields are present; otherwise it includes explicit null
-placeholders so the user knows exactly what to fill in.
+of PDS files.
 """
 
 import csv
@@ -90,11 +88,7 @@ def _read_csv(path: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def _is_complete(star: dict, radius_inference: bool) -> tuple[bool, list[str]]:
-    """Return (complete, list_of_missing_fields).
-
-    A star is 'complete' when it has a pds_file, enough info for fitting,
-    AND (if radius_inference is on) the required Teff fields.
-    """
+    """Return (complete, list_of_missing_fields)."""
     missing = []
 
     if not star.get("pds_file"):
@@ -208,17 +202,7 @@ def collect_star_records(
     pattern: str = "*.pow",
     mission: str = "Kepler",
 ) -> list[dict]:
-    """Assemble star-record dicts from a CSV table and/or a PDS directory.
-
-    Three modes (mirroring the make-config CLI):
-      CSV + pds_dir : join rows to files by extracted name (fills pds_file)
-      CSV only      : pds_file comes from the table
-      pds_dir only  : names from filenames, stellar params left null
-
-    Each record is a dict with the keys consumed by load_config (name,
-    pds_file, numax, logg, teff, teff_err, feh, feh_err, mission, kind,
-    nyquist). Shared by `granalyse make-config` and config.load_config.
-    """
+    """Assemble star-record dicts from a CSV table and/or a PDS directory."""
     csv_rows: list[dict] = _read_csv(stars_csv) if stars_csv else []
 
     pds_files: list[str] = []
@@ -379,10 +363,10 @@ def generate_config(
     buf.write("\n")
     buf.write("binning:\n")
     buf.write("  enabled: true\n")
-    buf.write("  resolution: 0.5              # target bin resolution [muHz]\n")
+    buf.write("  resolution: auto             # target bin resolution [muHz]; auto = by numax\n")
     buf.write("  visual_bins: 10              # plot-only binning\n")
     buf.write("\n")
-    buf.write("low_frequency_cut: 10          # discard frequencies below this [muHz]; null to keep\n")
+    buf.write("low_frequency_cut: auto        # discard frequencies below this [muHz]; null to keep; auto = by numax\n")
     buf.write("\n")
     buf.write("sampling:\n")
     buf.write("  nlive_factor: null           # multiply default nlive; null = default\n")
@@ -437,13 +421,13 @@ def add_subparser(subparsers) -> None:
         description=(
             "Build a human-readable Granalyse config from a CSV/TSV star table, "
             "a directory of PDS spectra, or both.  Fields that cannot be inferred "
-            "are emitted as  null  # FILL IN  placeholders."
+            "are emitted as null # FILL IN placeholders."
         ),
     )
     p.add_argument(
         "--stars",
         metavar="TABLE.CSV",
-        help="CSV/TSV file with star metadata (delimiter sniffed automatically).  "
+        help="CSV/TSV file with star metadata.  "
              "Recognised columns: name, pds_file, numax, logg, teff, teff_err, "
              "feh, feh_err, mission, kind, nyquist.",
     )
