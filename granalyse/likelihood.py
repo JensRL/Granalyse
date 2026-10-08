@@ -21,22 +21,37 @@ def unpackParams(logPars, keys, theta):
     return thetaU
 
 
+def gamma_shape(dof):
+    """Gamma shape of a binned PDS bin from its chi2 degrees of freedom.
+
+    The mean of N independent chi2_2 bins is chi2 with dof = 2N, i.e. a Gamma
+    distribution with shape N = dof/2 and mean M (Appourchaux 2003). 
+    """
+    return dof / 2
+
+
+def log_norm(shape):
+    """Normalisation N ln N - lnGamma(N) of the Gamma(shape N, mean M) density."""
+    return shape * jnp.log(shape) - jax.scipy.special.gammaln(shape)
+
+
 @jax.jit
-def chi2_dist(P, dof, mod, term1):
-    """Chi-squared log-likelihood for binned PDS data (Handberg & Campante 2014)."""
-    term2 = (dof - 1) * jnp.log(P) - dof * jnp.log(mod)
-    term3 = -dof * P / mod
+def chi2_dist(P, shape, mod, term1):
+    """Log-likelihood of a binned PDS: independent Gamma(shape, mean mod) bins,
+    term1 = log_norm(shape) (Appourchaux 2003; Handberg & Campante 2011)."""
+    term2 = (shape - 1) * jnp.log(P) - shape * jnp.log(mod)
+    term3 = -shape * P / mod
     return jnp.sum(term1 + term2 + term3)
 
 
-def peakbogging_dist(P, dof, mod_back, beta, term1):
+def peakbogging_dist(P, shape, mod_back, beta, term1):
     """Per-bin log-likelihoods of the background and the scaled (peak) background."""
-    term2 = (dof - 1) * jnp.log(P) - dof * jnp.log(mod_back)
-    term3 = -dof * P / mod_back
+    term2 = (shape - 1) * jnp.log(P) - shape * jnp.log(mod_back)
+    term3 = -shape * P / mod_back
     background = term1 + term2 + term3
 
-    term2peak = (dof - 1) * jnp.log(P) - dof * jnp.log(mod_back * beta)
-    term3peak = -dof * P / (mod_back * beta)
+    term2peak = (shape - 1) * jnp.log(P) - shape * jnp.log(mod_back * beta)
+    term3peak = -shape * P / (mod_back * beta)
     peakbog = term1 + term2peak + term3peak
 
     return background, peakbog
@@ -70,9 +85,10 @@ def compute_static_chi2(P, bagmean, sigmoid):
 @jax.jit
 def mixed_mod_likelihood(P, dof, mod, sigmoid, chi2_sigmoid):
     """Chi2 likelihood mixed with a sigmoid-weighted static term."""
-    term1 = (dof - 1) * jnp.log(dof) - jax.scipy.special.gammaln(dof - 1)
-    term2 = (dof - 1) * jnp.log(P) - dof * jnp.log(mod)
-    term3 = -dof * P / mod
+    shape = gamma_shape(dof)
+    term1 = log_norm(shape)
+    term2 = (shape - 1) * jnp.log(P) - shape * jnp.log(mod)
+    term3 = -shape * P / mod
     chi2_standard = jnp.log(sigmoid) + jnp.sum((term1 + term2 + term3))
     chi2_standard_logsum = jax.scipy.special.logsumexp(chi2_standard)
     chi2_sigmoid_logsum = jax.scipy.special.logsumexp(chi2_sigmoid)
@@ -90,8 +106,8 @@ def make_loglike(fit, model=None):
     nu = jnp.array(fit.freq)
     power = jnp.array(fit.power)
     eta = jnp.array(fit.eta)
-    dof = int(fit.dof)
-    term1 = (dof - 1) * jnp.log(dof) - jax.scipy.special.gammaln(dof - 1)
+    shape = gamma_shape(int(fit.dof))
+    term1 = log_norm(shape)
     logPars = fit.logPars
     keys = list(fit.priors.keys())
 
@@ -120,7 +136,7 @@ def make_loglike(fit, model=None):
             thetaP = phys_params(thetaU)
             mod_back = func_back(nu=nu, eta=eta, **thetaP)
             mod_peak = oscpeak(nu, thetaU["numax_fit"], thetaU["H"], sigma)
-            Lback, Lpeak = peakbogging_dist(power, dof, mod_back, thetaU["beta"], term1)
+            Lback, Lpeak = peakbogging_dist(power, shape, mod_back, thetaU["beta"], term1)
             term_back = jnp.log1p(-mod_peak) + Lback
             term_peak = jnp.log(mod_peak) + Lpeak
             log_mix = jnp.logaddexp(term_back, term_peak)
@@ -136,7 +152,7 @@ def make_loglike(fit, model=None):
             thetaU = unpackParams(logPars, keys, theta)
             thetaP = phys_params(thetaU)
             mod = func_real(nu=nu, eta=eta, **thetaP)
-            L = chi2_dist(power, dof, mod, term1)
+            L = chi2_dist(power, shape, mod, term1)
             L += constraint(**thetaP)
             return L
 

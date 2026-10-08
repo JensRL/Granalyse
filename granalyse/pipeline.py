@@ -131,11 +131,13 @@ def prepare_star_data(star, cfg):
     bin_resolution, low_frequency_cut = data_settings(star, cfg)
     freq, power = gdata.read_data(fit)
     fit.nyquist = star.nyquist if star.nyquist is not None else freq[-1]
+    sys_mask = None
     if kind == "star":
-        # Kepler/TESS instrumental systematics; not present in simulations
-        power, _ = gdata.mask_systematics(freq, power, fit.numax)
+        # Kepler/TESS instrumental systematics (not in simulations): bins of clearly
+        # present catalogue peaks are excluded from the likelihood, never replaced
+        sys_mask, _ = gdata.detect_systematics(freq, power, fit.numax, verbose=True)
     freq, power, _ = gdata.process_binning(freq, power, fit, cfg.bin_data,
-                                           bin_resolution, cfg.bin_visuals)
+                                           bin_resolution, cfg.bin_visuals, mask=sys_mask)
     freq, power, _ = gdata.cut_low_frequencies(freq, power, fit, low_frequency_cut)
     fit.freq, fit.power = freq, power
     fit.eta = gdata.calc_eta(fit)

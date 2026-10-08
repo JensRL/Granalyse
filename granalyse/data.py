@@ -77,298 +77,174 @@ def read_data(fit_class):
     return freq, power
 
 
-def mask_systematics(freq, power, numax, sys_dict=SC_sys_peaks,
-                     # Detection (adaptive local mean)
-                     threshold=7,
-                     rel_span_frac=0.02, min_span_muHz=5.0, max_span_muHz=30.0,
-                     # Matching
-                     sys_match_tol_muHz=5.0,
-                     # Seed expansion (coarse)
-                     expand_factor=0.5,
-                     max_replace_width_muHz=5.0,
-                     # Refinement pass (sideband sigma method)
-                     refine=True,
-                     sideband_width_muHz=8.0,
-                     refine_detect_k=2.5,
-                     refine_quiet_bins=8,
-                     gap_tolerance=3,
-                     min_core_bins=5,
-                     smooth_power=3,
-                     # Replacement
-                     edge_buffer_bins=20,
-                     replace_method='interp',
-                     # Output
-                     verbose=False,
-                     dump_info=False,
-                     plot=False):
-    """Detect and clean known systematic peaks.
+# Half-width [muHz] of a catalogue entry's exclusion window by width class.
+# Entries with explicit bounds use those; unclassified ones count as broad.
+SYS_HALF_WIDTH = {"narrow": 0.5, "broad": 2.5, "very broad": 4.0}
 
-    Pipeline:
-      1) Adaptive local mean (frequency-span based) -> mark bins where
-         power > threshold*local_mean.
-      2) Group contiguous bins -> clusters.
-      3) Match cluster centers to catalog systematics within sys_match_tol_muHz.
-      4) (Seed) Expand cluster limited by max_replace_width_muHz using
-         expand_factor*threshold.
-      5) (Refine, optional) Recompute precise contaminated width using sidebands:
-            - sidebands just outside ±max_replace_width_muHz/2 give baseline &
-              scatter (MAD->sigma)
-            - expand from catalog center until refine_quiet_bins consecutive bins
-              fall below baseline + refine_detect_k*sigma (bridging small gaps
-              ≤ gap_tolerance)
-            - enforce width cap & min_core_bins.
-      6) Replacement: linear interpolation (or median) between robust side medians
-         (edge buffers) over final contaminated span.
 
-    Returns
-      (power_clean, mask_info) normally, or
-      (peaks, peak_freqs, local_mean, win_lengths, power_clean, mask_info)
-      when dump_info=True.
+def _sys_window(f0, meta):
+    """(lo, hi) exclusion window [muHz] of an SC_sys_peaks entry."""
+    if len(meta) >= 4:
+        return float(meta[2]), float(meta[3])
+    desc = str(meta[1]).lower()
+    if "very broad" in desc:
+        hw = SYS_HALF_WIDTH["very broad"]
+    elif "narrow" in desc:
+        hw = SYS_HALF_WIDTH["narrow"]
+    else:
+        hw = SYS_HALF_WIDTH["broad"]
+    return f0 - hw, f0 + hw
+
+
+def _variance_inflation(x, n, max_lag):
+    """Var(sum of n consecutive x) / (n Var(x)) from the sample autocorrelation of
+    x up to max_lag; >= 1. Absorbs the weak correlation of neighbouring bins."""
+    x = np.asarray(x, float) - np.mean(x)
+    var = np.mean(x * x)
+    if x.size < 3 * max_lag or var <= 0:
+        return 1.0
+    kappa = 1.0
+    for k in range(1, min(max_lag, n - 1) + 1):
+        rho = np.mean(x[:-k] * x[k:]) / var
+        kappa += 2.0 * (1.0 - k / n) * rho
+    return max(1.0, kappa)
+
+
+def detect_systematics(freq, power, numax, sys_dict=SC_sys_peaks, fap=0.01,
+                       test_half_widths=(0.1, 0.5, 2.5), sideband_gap=1.0,
+                       sideband_width=15.0, min_sideband_bins=50, max_lag=10,
+                       protect_fwhm=1.5, verbose=False):
+    """Flag known instrumental peaks that are clearly present, for exclusion.
+
+    For each catalogue entry, the mean power in windows of several widths
+    centred on it is compared with the local background B, the mean power of
+    the neighbouring sidebands (5% of the frequency wide, at most
+    sideband_width; log-linearly interpolated across the window).
+    For independent native bins of chi2_2 noise the ratio R = mean(P/B) follows
+    F(2 n_win, 2 n_side) when no systematic is present (cf. Appourchaux 2004),
+    which accounts for the noise of both the window and the background
+    estimate. The weak correlation of neighbouring bins is absorbed by
+    variance-inflation factors kappa measured in the sidebands, reducing the
+    degrees of freedom to 2n/kappa. An entry is flagged when any of its tests
+    falls below fap / (number of tests), i.e. a false-alarm probability <= fap
+    per spectrum (Bonferroni), and its whole catalogue window is then excluded.
+
+    Entries whose window lies within protect_fwhm x FWHM of numax (envelope FWHM
+    of Mosser et al. 2012) are not tested, so oscillation modes are never taken
+    for systematics. Expects the native (unbinned, non-oversampled) spectrum.
+
+    Returns (mask, info): mask is True for native bins to exclude from the
+    likelihood (bins are never replaced); info has one dict per catalogue entry.
     """
-    freq = np.asarray(freq)
-    power = np.asarray(power)
-    df = np.median(np.diff(freq))
-    n = power.size
+    from scipy.stats import f as f_dist
 
-    # ---------- Adaptive local mean ----------
-    span_muHz = np.clip(rel_span_frac * freq, min_span_muHz, max_span_muHz)
-    win_lengths = np.maximum(3, (span_muHz / df).astype(int))
-    win_lengths += (win_lengths % 2 == 0)
-    csum = np.concatenate(([0.0], np.cumsum(power)))
-    half = win_lengths // 2
-    # Variable-width rolling mean over all bins: window [i-half, i+half] clipped to [0, n).
-    idx = np.arange(n)
-    L = np.maximum(0, idx - half)
-    R = np.minimum(n, idx + half + 1)
-    local_mean = (csum[R] - csum[L]) / (R - L)
+    freq = np.asarray(freq, float)
+    power = np.asarray(power, float)
+    mask = np.zeros(freq.size, bool)
 
-    # ---------- Seed detection ----------
-    peaks = np.where(power > threshold * local_mean)[0]
-    peak_freqs = freq[peaks]
-    if verbose or plot:
-        print(f"[mask_systematics] Seed: {len(peak_freqs)} bins > {threshold}×local_mean "
-              f"(median window {int(np.median(win_lengths))} bins "
-              f"≈ {np.median(win_lengths)*df:.2f} µHz)")
-
-    # ---------- Group contiguous ----------
-    def group_contiguous(idx):
-        if len(idx) == 0:
-            return []
-        groups = []
-        s = prev = idx[0]
-        for k in idx[1:]:
-            if k == prev + 1:
-                prev = k
-            else:
-                groups.append((s, prev))
-                s = prev = k
-        groups.append((s, prev))
-        return groups
-
-    seed_groups = group_contiguous(peaks)
-
-    sys_freqs = np.array(sorted(sys_dict.keys()))
-    power_clean = power.copy()
-    mask_info = {}
-    expand_thresh_mult = expand_factor * threshold
-
-    # Precompute smoothed series for refine boundary detection
-    if refine and smooth_power > 1:
-        from scipy.ndimage import median_filter
-        det_series = median_filter(power, size=smooth_power)
+    entries = [(f0, sys_dict[f0], *_sys_window(f0, sys_dict[f0])) for f0 in sorted(sys_dict)]
+    in_cat = np.zeros(freq.size, bool)
+    for _, _, lo, hi in entries:
+        in_cat |= (freq >= lo) & (freq <= hi)
+    if numax is not None:
+        fwhm = 0.66 * numax ** 0.88
+        zone = (numax - protect_fwhm * fwhm, numax + protect_fwhm * fwhm)
     else:
-        det_series = power
+        zone = None
 
-    def mad_sigma(x):
-        med = np.median(x)
-        mad = np.median(np.abs(x - med))
-        sigma = 1.4826 * mad if mad > 0 else np.std(x)
-        return med, sigma
-
-    for g_start, g_end in seed_groups:
-        # ----- Match to nearest systematic -----
-        g_center_f = 0.5 * (freq[g_start] + freq[g_end])
-        i_sys = np.searchsorted(sys_freqs, g_center_f)
-        cand = []
-        if i_sys < len(sys_freqs):
-            cand.append(i_sys)
-        if i_sys > 0:
-            cand.append(i_sys - 1)
-        matched_sys = None
-        min_sep = None
-        for ci in cand:
-            sep = abs(sys_freqs[ci] - g_center_f)
-            if sep <= sys_match_tol_muHz and (min_sep is None or sep < min_sep):
-                matched_sys = sys_freqs[ci]
-                min_sep = sep
-        if matched_sys is None:
+    info, tests = [], []
+    for f0, meta, lo, hi in entries:
+        rec = {"freq": f0, "label": meta[0], "descriptor": meta[1], "lo": lo, "hi": hi,
+               "status": "", "p_value": np.nan, "excess": np.nan,
+               "test_halfwidth": np.nan, "kappa": np.nan, "n_masked": 0}
+        info.append(rec)
+        if hi < freq[0] or lo > freq[-1]:
+            rec["status"] = "outside data"
             continue
-        # Safety: skip systematics within ±15% of numax
-        if numax is not None and (numax * 0.85 <= matched_sys <= numax * 1.15):
-            if verbose:
-                print(f"[mask_systematics] Skip {matched_sys:.2f} µHz: "
-                      f"within ±15% of νmax={numax:.2f}")
+        if zone is not None and hi >= zone[0] and lo <= zone[1]:
+            rec["status"] = "protected"
             continue
 
-        # ----- Seed expansion (coarse) -----
-        left, right = g_start, g_end
-        while left > 0:
-            if freq[g_end] - freq[left - 1] > max_replace_width_muHz:
-                break
-            if power[left - 1] > expand_thresh_mult * local_mean[left - 1]:
-                left -= 1
-            else:
-                break
-        while right < n - 1:
-            if freq[right + 1] - freq[g_start] > max_replace_width_muHz:
-                break
-            if power[right + 1] > expand_thresh_mult * local_mean[right + 1]:
-                right += 1
-            else:
-                break
-
-        # ----- Refine exact contaminated span -----
-        if refine:
-            c_idx = np.argmin(np.abs(freq - matched_sys))
-            c_freq = freq[c_idx]
-            half_cap = 0.5 * max_replace_width_muHz
-            f_cap_lo = c_freq - half_cap
-            f_cap_hi = c_freq + half_cap
-            i_cap_lo = np.searchsorted(freq, f_cap_lo, 'left')
-            i_cap_hi = np.searchsorted(freq, f_cap_hi, 'right') - 1
-            i_cap_lo = max(0, i_cap_lo)
-            i_cap_hi = min(n - 1, i_cap_hi)
-
-            # Sidebands
-            sb_lo1 = max(freq[0], f_cap_lo - sideband_width_muHz)
-            sb_lo2 = f_cap_lo
-            sb_hi1 = f_cap_hi
-            sb_hi2 = min(freq[-1], f_cap_hi + sideband_width_muHz)
-            idx_sb_left = np.where((freq >= sb_lo1) & (freq < sb_lo2))[0]
-            idx_sb_right = np.where((freq > sb_hi1) & (freq <= sb_hi2))[0]
-            if idx_sb_left.size >= 3 and idx_sb_right.size >= 3:
-                side_vals = np.concatenate([power[idx_sb_left], power[idx_sb_right]])
-                base, sigma = mad_sigma(side_vals)
-                thresh_ref = base + refine_detect_k * sigma
-                # expand left
-                L = c_idx
-                quiet = 0
-                i = c_idx
-                while i > i_cap_lo:
-                    i -= 1
-                    if det_series[i] <= thresh_ref:
-                        quiet += 1
-                        if quiet >= refine_quiet_bins:
-                            L = i + refine_quiet_bins
-                            break
-                    else:
-                        quiet = 0
-                        L = i
-                # expand right
-                R = c_idx
-                quiet = 0
-                i = c_idx
-                while i < i_cap_hi:
-                    i += 1
-                    if det_series[i] <= thresh_ref:
-                        quiet += 1
-                        if quiet >= refine_quiet_bins:
-                            R = i - refine_quiet_bins
-                            break
-                    else:
-                        quiet = 0
-                        R = i
-                # Bridge small gaps
-                if R > L:
-                    mask_det = det_series[L:R + 1] > thresh_ref
-                    gap_start = None
-                    for k, v in enumerate(mask_det):
-                        if not v and gap_start is None:
-                            gap_start = k
-                        if v and gap_start is not None:
-                            if (k - gap_start) <= gap_tolerance:
-                                mask_det[gap_start:k] = True
-                            gap_start = None
-                    if gap_start is not None:
-                        if (len(mask_det) - gap_start) <= gap_tolerance:
-                            mask_det[gap_start:] = True
-                    if mask_det.any():
-                        rel = np.where(mask_det)[0]
-                        L = L + rel[0]
-                        R = L + (rel[-1] - rel[0])
-                # Enforce cap
-                while freq[R] - freq[L] > max_replace_width_muHz and R > L:
-                    if (det_series[L] - base) < (det_series[R] - base):
-                        L += 1
-                    else:
-                        R -= 1
-                if R - L + 1 >= min_core_bins:
-                    left, right = L, R
-
-        # ----- Context (edge medians) -----
-        left_lo = max(0, left - edge_buffer_bins)
-        left_hi = left
-        right_lo = right + 1
-        right_hi = min(n, right + 1 + edge_buffer_bins)
-        if left_lo >= left_hi or right_lo >= right_hi:
+        # Local background from the sidebands (other catalogue windows left out)
+        sides = []
+        # Sidebands span 5% of the frequency (at most sideband_width) so a curved
+        # background (granulation knee, activity) is close to log-linear across them
+        sbw = min(sideband_width, 0.05 * f0)
+        for a, b in ((lo - sideband_gap - sbw, lo - sideband_gap),
+                     (hi + sideband_gap, hi + sideband_gap + sbw)):
+            sel = (freq >= a) & (freq < b) & ~in_cat
+            if sel.sum() >= 10:
+                sides.append(sel)
+        if sum(s.sum() for s in sides) < min_sideband_bins:
+            rec["status"] = "untestable"
             continue
-        left_val = np.median(power_clean[left_lo:left_hi])
-        right_val = np.median(power_clean[right_lo:right_hi])
+        f_side = np.array([np.mean(freq[s]) for s in sides])
+        lb_side = np.log([np.mean(power[s]) for s in sides])
+        n_side = np.array([s.sum() for s in sides], float)
+        # Correlation of neighbouring bins, from the sidebands' power ratios
+        ratios = [power[s] / np.mean(power[s]) for s in sides]
 
-        # ----- Replacement -----
-        if replace_method == 'interp':
-            repl = np.linspace(left_val, right_val, right - left + 1)
+        def interp_weights(f):
+            """Weights of the sidebands in the log-linear background at f."""
+            if len(sides) == 1:
+                return np.ones((f.size, 1))
+            t = np.clip((f - f_side[0]) / (f_side[1] - f_side[0]), 0.0, 1.0)
+            return np.column_stack([1.0 - t, t])
+
+        # Nested test windows centred on the catalogue frequency, up to the full window
+        windows = [(max(lo, f0 - h), min(hi, f0 + h)) for h in test_half_widths
+                   if f0 - h > lo or f0 + h < hi] + [(lo, hi)]
+        for a, b in windows:
+            sel = (freq >= a) & (freq <= b)
+            n = int(sel.sum())
+            if n == 0:
+                continue
+            wts = interp_weights(freq[sel])
+            R = float(np.mean(power[sel] / np.exp(wts @ lb_side)))
+            # Degrees of freedom: window (n bins) and the background estimate,
+            # whose relative variance is sum_j (w_j^2 kappa_j / n_j)
+            kappa_w = float(np.dot(n_side, [_variance_inflation(r, n, max_lag) for r in ratios])
+                            / n_side.sum())
+            w_bar = wts.mean(axis=0)
+            kappa_s = np.array([_variance_inflation(r, r.size, max_lag) for r in ratios])
+            n_bg = 1.0 / np.sum(w_bar ** 2 * kappa_s / n_side)
+            p = float(f_dist.sf(R, 2.0 * n / kappa_w, 2.0 * n_bg))
+            tests.append((rec, p, R, 0.5 * (b - a), kappa_w))
+
+    # Bonferroni over all tests of this spectrum, then exclude whole catalogue windows
+    p_crit = fap / max(len(tests), 1)
+    for rec in info:
+        mine = [t for t in tests if t[0] is rec]
+        if not mine:
+            continue
+        _, p, excess, half, kappa = min(mine, key=lambda t: t[1])
+        rec.update(p_value=p, excess=excess, test_halfwidth=round(half, 3), kappa=kappa)
+        if p < p_crit:
+            sel = (freq >= rec["lo"]) & (freq <= rec["hi"])
+            mask |= sel
+            rec["status"] = "masked"
+            rec["n_masked"] = int(sel.sum())
         else:
-            repl = np.full(right - left + 1, 0.5 * (left_val + right_val))
-        power_clean[left:right + 1] = repl
+            rec["status"] = "not significant"
 
-        mask_info[matched_sys] = {
-            'descriptor': sys_dict[matched_sys][1],
-            'freq_range': (freq[left], freq[right]),
-            'width_muHz': freq[right] - freq[left],
-            'nbins': right - left + 1,
-            'sys_sep_muHz': float(min_sep),
-            'refined': refine,
-        }
-        if verbose:
-            print(f"Cleaned {matched_sys:.2f} µHz: "
-                  f"width {mask_info[matched_sys]['width_muHz']:.2f} µHz "
-                  f"({mask_info[matched_sys]['nbins']} bins)")
-
-    # ---------- Plot ----------
-    if plot:
-        import matplotlib.pyplot as plt
-        plt.figure(figsize=(10, 6))
-        plt.plot(freq, power, label='Original', color='C0', alpha=0.35)
-        plt.plot(freq, local_mean, label='Local mean', color='C1', lw=0.8)
-        plt.plot(freq, power_clean, label='Cleaned', color='k', lw=0.7)
-        for info in mask_info.values():
-            f1, f2 = info['freq_range']
-            plt.axvspan(f1, f2, color='tab:red', alpha=0.15)
-        plt.xscale('log')
-        plt.yscale('log')
-        plt.xlabel('Frequency (µHz)')
-        plt.ylabel('Power Density')
-        plt.title('Systematic Cleaning')
-        plt.legend()
-        plt.tight_layout()
-        plt.show()
-
-    if dump_info:
-        return peaks, peak_freqs, local_mean, win_lengths, power_clean, mask_info
-    else:
-        return power_clean, mask_info
+    if verbose:
+        hits = [f"{r['freq']:.1f}" for r in info if r["status"] == "masked"]
+        print(f"Systematics: {len(hits)} masked ({', '.join(hits) or 'none'}), "
+              f"{mask.sum()} native bins excluded")
+    return mask, info
 
 
-def bin_to_res_fixed_count(freq, power, version, resolution_muHz=0.5, verbose=True):
+def bin_to_res_fixed_count(freq, power, version, resolution_muHz=0.5, verbose=True,
+                            mask=None):
     """Bin PDS so every output bin contains exactly s_int points. s_int is chosen to give 
-    achieved resolution closest to the requested resolution
+    achieved resolution closest to the requested resolution. Native bins flagged in
+    ``mask`` are excluded: a binned point containing any of them is dropped.
 
     Returns
     -------
     binned_freq : ndarray
     binned_power : ndarray
-    s_int : int (points per bin; dof = 2*s_int)
+    s_int : int (points per bin; chi2 dof = 2*s_int, Gamma shape = s_int)
     achieved_res_muHz : float
     n_dropped : int
     """
@@ -383,7 +259,8 @@ def bin_to_res_fixed_count(freq, power, version, resolution_muHz=0.5, verbose=Tr
             f"the data spacing ({native_spacing:.3f} µHz). "
             "Cannot bin to a higher resolution than native."
         )
-        return freq, power, 1, native_spacing, 0
+        keep = ~mask if mask is not None else slice(None)
+        return freq[keep], power[keep], 1, native_spacing, 0
 
     s_float = resolution_muHz / native_spacing
     s_round = int(np.round(s_float))
@@ -418,6 +295,9 @@ def bin_to_res_fixed_count(freq, power, version, resolution_muHz=0.5, verbose=Tr
 
     binned_freq = np.mean(freq_blocks, axis=1)
     binned_power = np.mean(power_blocks, axis=1)
+    if mask is not None:
+        keep = ~np.asarray(mask)[:n_used].reshape(n_full_bins, s_int).any(axis=1)
+        binned_freq, binned_power = binned_freq[keep], binned_power[keep]
 
     if verbose:
         print(f"Native_spacing = {native_spacing:.6g} µHz")
@@ -459,7 +339,7 @@ def bin_data_simplistic(freq, power, bin_size):
     return binned_freq, binned_power
 
 
-def process_binning(freq, power, fit, bin_data, bin_res, bin_visuals):
+def process_binning(freq, power, fit, bin_data, bin_res, bin_visuals, mask=None):
     """Handle binning of stellar power spectra.
 
     Parameters
@@ -476,6 +356,8 @@ def process_binning(freq, power, fit, bin_data, bin_res, bin_visuals):
         Target binning resolution (µHz) for fixed-count binning.
     bin_visuals : int
         Points-per-bin for visual binning when main binning is skipped.
+    mask : bool ndarray or None
+        Native bins to exclude (detected systematics); never filled in.
 
     Returns
     -------
@@ -490,7 +372,7 @@ def process_binning(freq, power, fit, bin_data, bin_res, bin_visuals):
         freq_raw, power_raw = freq.copy(), power.copy()
         version = fit.pulsmod
         freq, power, bin_size, outres, ndrop = bin_to_res_fixed_count(
-            freq_raw, power_raw, version, bin_res, verbose=False
+            freq_raw, power_raw, version, bin_res, verbose=False, mask=mask
         )
         print(f'Binned data to {outres:.2f} µHz resolution -- bin size: {bin_size}')
         bin_info.update({'bin_size': bin_size, 'outres': outres, 'ndrop': ndrop})
@@ -515,11 +397,13 @@ def process_binning(freq, power, fit, bin_data, bin_res, bin_visuals):
             fit.freq_raw = freq_raw
             fit.power_raw = power_raw
             fit.bin_size = bin_size
-            fit.dof = 2 * bin_size  # Appourchaux (2003a)
+            fit.dof = 2 * bin_size  # chi2 dof; likelihood uses Gamma shape dof/2 (Appourchaux 2003a)
 
     else:
         # No main binning; just visualization binning
         fit.bin_data = False
+        if mask is not None:
+            freq, power = freq[~mask], power[~mask]
         fit.bin_size = bin_visuals
 
         freq_binned, power_binned = bin_data_simplistic(freq, power, fit.bin_size)

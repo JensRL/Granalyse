@@ -19,6 +19,7 @@ import jax.numpy as jnp
 from .models import get_model
 from .scaling import gran_a, gran_b, gran_d
 from .data import bin_data_simplistic
+from .likelihood import gamma_shape, log_norm, peakbogging_dist
 
 plt.rcParams["agg.path.chunksize"] = 20000
 
@@ -37,16 +38,6 @@ def _save_corner(fig, path):
         ax.set_rasterization_zorder(_CORNER_RASTER_ZORDER)
     fig.savefig(path, dpi=_CORNER_RASTER_DPI)
 
-
-def _peakbogging_likelihood_plotting(P, dof, mod_back, beta, term1):
-    """Per-frequency background and peak log-likelihoods (for visualisation)."""
-    term2 = (dof - 1) * jnp.log(P) - dof * jnp.log(mod_back)
-    term3 = -dof * P / mod_back
-    Lback = term1 + term2 + term3
-    term2peak = (dof - 1) * jnp.log(P) - dof * jnp.log(mod_back * beta)
-    term3peak = -dof * P / (mod_back * beta)
-    Lpeak = term1 + term2peak + term3peak
-    return jnp.sum(Lback), jnp.sum(Lpeak), Lback, Lpeak
 
 # ---------------------------------------------------------------------------
 # Small pure helpers
@@ -543,11 +534,10 @@ def present_fit(fit, model=None):
 
         if H_val is not None:
             # Likelihood ratio per frequency
-            dof = int(fit.dof)
-            term1 = (dof - 1) * jnp.log(dof) - jax.scipy.special.gammaln(dof - 1)
+            shape = gamma_shape(int(fit.dof))
             beta_val = float(fit.fitresults["beta"][0])
-            _, _, Lback_freq, Lpeak_freq = _peakbogging_likelihood_plotting(
-                jnp.asarray(power), dof, jnp.asarray(mod_back), beta_val, term1
+            Lback_freq, Lpeak_freq = peakbogging_dist(
+                jnp.asarray(power), shape, jnp.asarray(mod_back), beta_val, log_norm(shape)
             )
             Q = jnp.asarray(mod_peak)
             loglike_ratio = jnp.log(Q) + Lpeak_freq - Lback_freq
