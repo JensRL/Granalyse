@@ -14,7 +14,10 @@ def beta_params_from_mode(lower_bound, upper_bound, numax, delta=0.1, k=10.0):
     loc = lower_bound
     end = upper_bound
     scale = end - loc
-    target_mode = (1 + delta) * numax
+    # Clamp the target mode just inside the upper bound: for stars with numax
+    # near the Nyquist frequency the (1 + delta) * numax mode can fall outside
+    # [lower, upper] when the bound is capped at 0.9 * nyquist.
+    target_mode = min((1 + delta) * numax, loc + 0.9 * scale)
     m = (target_mode - loc) / scale
     if not (0 < m < 1):
         raise ValueError(f"Mode fraction m={m:.4f} not in (0,1). Adjust eps/delta/eta.")
@@ -101,6 +104,13 @@ def set_priors(fit, model=None):
         numax_window = 2 * FWHM_to_sigma
         numax_region = np.where((freq_con > fit.numax - numax_window) &
                                 (freq_con < fit.numax + numax_window))
+        if numax_region[0].size == 0:
+            # The visualization-binned grid can be coarser than the numax
+            # window for low-numax stars; fall back to the raw spectrum.
+            freq_con = fit.freq
+            power_con = fit.power
+            numax_region = np.where((freq_con > fit.numax - numax_window) &
+                                    (freq_con < fit.numax + numax_window))
         median_pow = np.median(power_con[numax_region])
         if fit.numax < 1000:  # mode guess (RGB vs others)
             Posc_est = 0.4 * median_pow
