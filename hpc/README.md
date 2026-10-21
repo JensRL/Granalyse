@@ -5,7 +5,7 @@ job. **The general user does not need anything in this directory** — `granalys
 run config.yaml` performs the same fits locally.
 
 Workflow (run from a directory of your choice on the cluster, with the
-Granalyse `.gvenv` active):
+Granalyse venv, e.g. `gvenv`, active):
 
 1. **Generate** the SLURM array job from your config, giving a rough estimate
    of how long a single model fit takes:

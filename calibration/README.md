@@ -13,7 +13,7 @@ For each star in your sample it:
 
 1. Finds the granalyse nested-sampling posteriors under `<results-dir>/<name>/model_<MODEL>_*/FitData_model_<MODEL>.csv`.
 2. Transforms the raw posteriors to physical `(charb [μHz], A_gran [ppm])`.
-3. Computes the **per-star posterior median of log₁₀(A_gran) and log₁₀(charb)** and their **2×2 covariance matrix**`.
+3. Computes the **per-star posterior median of log₁₀(A_gran) and log₁₀(charb)** and their **2×2 covariance matrix**.
 4. Normalises all quantities to **relative space** (divided by a reference star; Perky, KIC 6106415, by default).
 5. Assembles the Stan data dict and runs a **hierarchical Stan regression**.
 6. Saves the coefficient draws together with the reference star, as a relation set.
@@ -25,7 +25,7 @@ The regression model may be seen in `relation_model.stan`
 ## Requirements
 
 ```bash
-pip install granalyse[calibration]   # cmdstanpy, arviz, h5netcdf + h5py
+pip install -e '.[calibration]'     # from the repo root; cmdstanpy, arviz, h5netcdf + h5py
 python -c "import cmdstanpy; cmdstanpy.install_cmdstan()"
 ```
 
@@ -64,8 +64,8 @@ python calibration/derive_relations.py sample.csv \
 ```
 
 All flags: `--model {H,J,T}`, `--mission {Kepler,TESS}`, `--output-dir`,
-`--chains`, `--iterations`, `--adapt-delta`, `--max-treedepth`, `--dry-run`,
-`--reference-json`.
+`--chains`, `--iterations`, `--adapt-delta`, `--max-treedepth`, `--seed`,
+`--refresh`, `--save-latent`, `--dry-run`, `--reference-json`.
 
 ### Using your own reference star
 
@@ -158,14 +158,12 @@ large samples prefer a lower `--iterations` over the default.
 
 ## Stan model variants
 
-`relation_model.stan` contains the **Gaussian measurement-error** variant
-(`lin_code_feh_gaussian` from GranRadRels/pystan_helpers.py), which was used
-for both shipped relation sets.
+`relation_model.stan` contains the **Gaussian measurement-error** variant,
+which was used for both shipped relation sets.
 
-A **Student-t** variant (`lin_code_feh_studentt`) also exists in the original
-file.  It adds a degrees-of-freedom parameter `nu ~ gamma(2, 0.1)` and uses
-`student_t(nu, ...)` likelihoods for robustness to outliers.  It is not
-ported here but can be added by copying the string from pystan_helpers.py.
+A **Student-t** variant, adding a degrees-of-freedom parameter
+`nu ~ gamma(2, 0.1)` and `student_t(nu, ...)` likelihoods for robustness to
+outliers, was explored in the original analysis but is not included here.
 
 ---
 
@@ -180,7 +178,7 @@ with `--iterations 3000`.
 
 1. **Random half-sample** — the shipped draws are the fit to one random
    (seed 42) draw of 50% of the calibration pool; the paper additionally
-   averaged 50 such draws (`run_seed_ensemble.py`). This script performs a
+   averaged 50 such draws. This script performs a
    single fit on the entire sample you provide.
 2. **Source stratification** — the pool was stratified across Legacy, KAGES,
    APOKASC1, seismic, and interferometric sub-samples. User-supplied samples

@@ -24,5 +24,5 @@
       "charb": 12.138058894002377
     }
   },
-  "provenance": "Atmospheric parameters, radius and mass from APOKASC-3 Table 4 (EvolState=RGB, CatTab=Gold, SeisSource=WAvg, Nquar=18, numax=40.3307 muHz, Dnu=4.6357 muHz, M=1.0142 Msun). amp/charb are posterior medians of the Kepler-bolometric-corrected observables from /Volumes/T7/Granulation_in_Giants/Results."
+  "provenance": "Atmospheric parameters, radius and mass from APOKASC-3 Table 4 (EvolState=RGB, CatTab=Gold, SeisSource=WAvg, Nquar=18, numax=40.3307 muHz, Dnu=4.6357 muHz, M=1.0142 Msun). amp/charb are posterior medians of the Kepler-bolometric-corrected observables from the Granalyse fits of this star."
 }

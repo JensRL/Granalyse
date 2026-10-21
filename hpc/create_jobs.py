@@ -305,19 +305,19 @@ def _detect_venv(repo_dir):
     """Activate script of the venv to source on the node.
 
     Prefers the venv this script is being run from (so the generated job uses
-    the same environment), falling back to the .gvenv in the repo checkout.
+    the same environment), falling back to a gvenv/.gvenv in the repo checkout.
     """
     candidates = []
     if os.environ.get("VIRTUAL_ENV"):
         candidates.append(os.path.join(os.environ["VIRTUAL_ENV"], "bin", "activate"))
     candidates.append(os.path.join(sys.prefix, "bin", "activate"))
-    candidates.append(os.path.join(repo_dir, ".gvenv", "bin", "activate"))
+    candidates += [os.path.join(repo_dir, d, "bin", "activate") for d in ("gvenv", ".gvenv")]
     for c in candidates:
         if os.path.isfile(c):
             return c
     raise SystemExit(
         "Could not find a venv to activate. Run this from the Granalyse venv, "
-        f"or create one at {os.path.join(repo_dir, '.gvenv')}.")
+        f"or create one at {os.path.join(repo_dir, 'gvenv')}.")
 
 
 def _build_source_tarball(repo_dir, dest):

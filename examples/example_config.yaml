@@ -1,6 +1,7 @@
 # Granalyse run configuration
 #
-# Run with:  granalyse run example_config.yaml
+# Run from the repository root with:  granalyse run examples/example_config.yaml
+# (pds_file and output_dir are relative to the directory you run from)
 
 output_dir: ./examples/example_results
 
