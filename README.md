@@ -49,10 +49,10 @@ stars:
     mission: Kepler       # or TESS (sets the bolometric correction)
 ```
 
-then run:
+To run the existing example config file, simply call:
 
 ```bash
-granalyse run config.yaml
+granalyse run examples/example_config.yaml
 ```
 
 **Computation time**: note that the nested sampling is computationally expensive. Depending on the duration, quality, and degree of binning of the PDS, the runtime per model may be substantial.
