@@ -15,7 +15,6 @@ keywords:
   - granulation
   - stellar radii
   - nested sampling
-  - Kepler
 references:
   - type: article
     title: "Granulation signatures in 3D hydrodynamical simulations: Evaluating background model performance using a Bayesian nested sampling framework"
