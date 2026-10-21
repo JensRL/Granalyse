@@ -103,8 +103,8 @@ The model-specific radius posteriors and resulting BMA radius posterior outputte
 
 Granalyse is the public merger product of various data analysis frameworks from previous research publications. 
 If you use Granalyse, please cite the following papers: 
-- [Larsen et al. 2025](https://doi.org/10.1051/0004-6361/202558683)
-- [Larsen et al. 2026a](https://doi.org/10.1051/0004-6361/202555661)
+- [Larsen et al. 2025](https://doi.org/10.1051/0004-6361/202555661)
+- [Larsen et al. 2026a](https://doi.org/10.1051/0004-6361/202558683)
 - [Larsen et al. 2026b](https://doi.org/10.1051/0004-6361/202660096)
 - Larsen et al. (in prep.), for the red-giant-branch radius relations
 
