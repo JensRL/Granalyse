@@ -57,7 +57,7 @@ granalyse run config.yaml
 
 **Computation time**: note that the nested sampling is computationally expensive. Depending on the duration, quality, and degree of binning of the PDS, the runtime per model may be substantial.
 
-**Output size**: the saved figures and posteriors can be quite large, resulting in up to 10 MB 
+**Output size**: the saved figures and posteriors can be quite large, resulting in up to 15 MB 
 of data being generated for each chosen model per star.
 
 

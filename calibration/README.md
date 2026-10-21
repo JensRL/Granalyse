@@ -80,7 +80,7 @@ reference of the shipped RGB set, `granalyse/radius/relations/rgb/reference_star
   "teff": 4643.5527,
   "R_cm": 646799247000.0,
   "feh": -0.2206,
-  "models": {"H": {"amp": 449.8155, "charb": 12.0463}}
+  "models": {"H": {"amp": 449.7731, "charb": 12.0389}}
 }
 ```
 
@@ -178,10 +178,10 @@ with `--iterations 3000`.
 
 **`ms_sgb`** (Larsen et al. 2026b) differs from what this script does:
 
-1. **Multi-seed drawing** — 50 independent random draws of 50% of the
-   calibration pool, with the resulting coefficients averaged
-   (`run_seed_ensemble.py`). This script performs a single fit on the entire
-   sample you provide.
+1. **Random half-sample** — the shipped draws are the fit to one random
+   (seed 42) draw of 50% of the calibration pool; the paper additionally
+   averaged 50 such draws (`run_seed_ensemble.py`). This script performs a
+   single fit on the entire sample you provide.
 2. **Source stratification** — the pool was stratified across Legacy, KAGES,
    APOKASC1, seismic, and interferometric sub-samples. User-supplied samples
    are taken as-is.

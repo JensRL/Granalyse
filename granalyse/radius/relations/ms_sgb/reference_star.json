@@ -8,17 +8,17 @@
   "teff_sun": 5777,
   "models": {
     "H": {
-      "amp": 46.7572,
-      "charb": 608.908
+      "amp": 46.77917648036993,
+      "charb": 608.5019653105049
     },
     "J": {
-      "amp": 46.1226,
-      "charb": 595.7373
+      "amp": 46.11919612023235,
+      "charb": 595.3240764282244
     },
     "T": {
-      "amp": 46.794,
-      "charb": 587.9046
+      "amp": 46.58151140376199,
+      "charb": 589.6954513528148
     }
   },
-  "provenance": "Stan MCMC draws, derivation seed 42, arXiv:2605.26742; columns fac,x,y,z,z2,sigma trimmed from stan_fit_data_{model}.csv"
+  "provenance": "Stan MCMC draws, derivation seed 42, re-derived 2026-10-16 from fits with the corrected likelihood (Granalyse 0c6bddf); columns fac,x,y,z,z2,sigma trimmed from stan_fit_data_{model}.csv. amp/charb are the posterior medians of Perky's re-run fits; teff, R_cm and feh as published (arXiv:2605.26742)."
 }

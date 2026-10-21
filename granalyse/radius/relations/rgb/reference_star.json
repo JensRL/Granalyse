@@ -1,6 +1,6 @@
 {
   "name": "KIC 7125569",
-  "description": "Reference star of the red-giant-branch (RGB) granulation-radius relations (Larsen et al. in prep.).",
+  "description": "Reference star KIC 7125569 used to normalise observables into relative space for the giant (RGB) granulation-radius relations. Replaces Perky (KIC 6106415), which anchors the published MS/SGB relations of arXiv:2605.26742.",
   "teff": 4643.5527,
   "teff_err": 43.1809,
   "R_cm": 646799247000.0,
@@ -12,17 +12,17 @@
   "teff_sun": 5777,
   "models": {
     "J": {
-      "amp": 441.6536269001163,
-      "charb": 11.482322395344038
+      "amp": 441.7190031734929,
+      "charb": 11.484512991804628
     },
     "H": {
-      "amp": 449.81546747639493,
-      "charb": 12.04634743799455
+      "amp": 449.7731005953394,
+      "charb": 12.038924711796986
     },
     "T": {
-      "amp": 456.21161123806246,
-      "charb": 12.144699815873114
+      "amp": 456.2119190058568,
+      "charb": 12.138058894002377
     }
   },
-  "provenance": "Stan MCMC draws from calibration/derive_relations.py (4 chains x 2000 draws) on 4000 Kepler RGB stars with numax > 2.5 muHz. Teff, [Fe/H] and radius of the reference star from APOKASC-3 (Pinsonneault et al. 2025); amp/charb are posterior medians of its own Kepler-bolometric-corrected granulation observables."
+  "provenance": "Atmospheric parameters, radius and mass from APOKASC-3 Table 4 (EvolState=RGB, CatTab=Gold, SeisSource=WAvg, Nquar=18, numax=40.3307 muHz, Dnu=4.6357 muHz, M=1.0142 Msun). amp/charb are posterior medians of the Kepler-bolometric-corrected observables from /Volumes/T7/Granulation_in_Giants/Results."
 }

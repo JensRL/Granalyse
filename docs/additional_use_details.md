@@ -63,7 +63,8 @@ automatically by its νmax, the split set by the Kepler long-cadence Nyquist fre
 
 Granalyse warns when a radius is extrapolated: below νmax = 2.5 µHz (the tip of the RGB) 
 and above 3000 µHz (where the granulation timescales decouple from νmax).
-See the source papers for details.
+See the source papers for details. Both sets were derived from fits made with the corrected
+likelihood of October 2026, so the `ms_sgb` coefficients differ slightly from those published in Larsen et al. (2026b).
 
 The `rgb` set is calibrated on first-ascent giants only.
 Granalyse can analyse the granulation background in power spectra of core-helium-burning stars,
