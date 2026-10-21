@@ -1,0 +1,79 @@
+cff-version: 1.2.0
+message: "If you use Granalyse, please cite it and the papers listed under references."
+type: software
+title: "Granalyse"
+abstract: "Granulation background fitting and stellar radius inference via Bayesian nested sampling."
+authors:
+  - family-names: Larsen
+    given-names: Jens Reersted
+    orcid: "https://orcid.org/0009-0006-0423-2353"
+    affiliation: "Department of Physics and Astronomy, Aarhus University"
+repository-code: "https://github.com/JensRL/Granalyse"
+license: MIT
+keywords:
+  - asteroseismology
+  - granulation
+  - stellar radii
+  - nested sampling
+  - Kepler
+references:
+  - type: article
+    title: "Granulation signatures in 3D hydrodynamical simulations: Evaluating background model performance using a Bayesian nested sampling framework"
+    authors:
+      - family-names: Larsen
+        given-names: J. R.
+      - family-names: Lundkvist
+        given-names: M. S.
+      - family-names: Davies
+        given-names: G. R.
+      - family-names: Nielsen
+        given-names: M. B.
+      - family-names: Ludwig
+        given-names: H.-G.
+      - family-names: Zhou
+        given-names: Y.
+      - family-names: Rodríguez Díaz
+        given-names: L. F.
+      - family-names: Kjeldsen
+        given-names: H.
+    journal: "Astronomy & Astrophysics"
+    volume: 701
+    start: A92
+    year: 2025
+    doi: "10.1051/0004-6361/202555661"
+  - type: article
+    title: "Granulation signatures as seen by Kepler short-cadence data. I. A decoupling between granulation and oscillation timescales for dwarfs"
+    authors:
+      - family-names: Larsen
+        given-names: J. R.
+      - family-names: Lundkvist
+        given-names: M. S.
+      - family-names: Nielsen
+        given-names: M. B.
+      - family-names: Davies
+        given-names: G. R.
+      - family-names: Zhou
+        given-names: Y.
+      - family-names: Lund
+        given-names: M. N.
+    journal: "Astronomy & Astrophysics"
+    volume: 707
+    start: A220
+    year: 2026
+    doi: "10.1051/0004-6361/202558683"
+  - type: article
+    title: "Granulation signatures as seen by Kepler short-cadence data. II. A hierarchical route to inferring stellar radii from granulation"
+    authors:
+      - family-names: Larsen
+        given-names: J. R.
+      - family-names: Lundkvist
+        given-names: M. S.
+      - family-names: Davies
+        given-names: G. R.
+      - family-names: Nielsen
+        given-names: M. B.
+    journal: "Astronomy & Astrophysics"
+    volume: 711
+    start: A245
+    year: 2026
+    doi: "10.1051/0004-6361/202660096"
