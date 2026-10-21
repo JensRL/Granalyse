@@ -25,7 +25,7 @@ The regression model may be seen in `relation_model.stan`
 ## Requirements
 
 ```bash
-pip install -e '.[calibration]'     # from the repo root; cmdstanpy, arviz, h5netcdf + h5py
+pip install -e ".[calibration]"     # from the repo root; cmdstanpy, arviz, h5netcdf + h5py
 python -c "import cmdstanpy; cmdstanpy.install_cmdstan()"
 ```
 

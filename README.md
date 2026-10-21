@@ -28,7 +28,7 @@ Optionally, to be able to re-derive granulation–radius relations yourself, ins
 calibration extra:
 
 ```bash
-pip install -e '.[calibration]'   
+pip install -e ".[calibration]"   
 ```
 
 ## Quick start

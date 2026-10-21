@@ -318,6 +318,9 @@ def _run_star_logged(star, cfg, star_dir):
             source = cfg.relations.get(rel_set, "shipped")
             own = f" ({source})" if rel_set in cfg.relations else ""
             print(f"  Relations: {rel_set}{own}, numax = {numax:.4g} muHz")
+            # infer_radius draws from the global numpy RNG; seed it for reproducibility
+            if cfg.seed is not None:
+                np.random.seed(cfg.seed)
             radius = infer_radius(
                 star.name,
                 posteriors=rel_models,
